@@ -297,6 +297,23 @@ class SlicerAPI:
         temps = {k: ext.getProperty(k, "value") for k in ("material_print_temperature", "material_bed_temperature")}
         return {"extruder": extruder, "material": material_id, "name": ext.material.getName(), "material_defaults": temps}
 
+    def set_extruder_enabled(self, extruder, enabled):
+        return run_on_main(self._set_extruder_enabled, extruder, enabled)
+
+    def _set_extruder_enabled(self, extruder, enabled):
+        extruder = int(extruder)
+        enabled = bool(enabled)
+        if extruder == 0 and not enabled:
+            raise ToolError("Основной экструдер (0) выключать нельзя")
+        mm = self._app.getMachineManager()
+        if not hasattr(mm, "setExtruderEnabled"):
+            raise ToolError("Эта версия слайсера не умеет включать/выключать экструдер из плагина")
+        self._extruder(extruder)  # validates the index
+        mm.setExtruderEnabled(extruder, enabled)
+        gs = self._global()
+        return {"extruder": extruder, "enabled": enabled,
+                "extruders_enabled_count": gs.getProperty("extruders_enabled_count", "value")}
+
     # ------------------------------------------------------------------ settings
     def get_settings(self, keys, extruder=None):
         return run_on_main(self._get_settings, keys, extruder)

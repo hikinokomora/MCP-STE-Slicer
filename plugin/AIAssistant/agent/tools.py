@@ -78,11 +78,19 @@ class ToolRegistry:
                  "Сохранить текущие изменённые настройки как новый пользовательский профиль и активировать его.",
                  _obj({"name": {"type": "string"}}, ["name"]),
                  lambda name: api.create_profile(name), "profile")
-        self.add("list_materials", "Материалы, доступные для экструдера текущего принтера.",
-                 _obj({"extruder": EXTRUDER}), lambda extruder=0: api.list_materials(extruder), "material")
+        self.add("list_materials",
+                 "Материалы, доступные для экструдера текущего принтера. in_knowledge_base=true — материал Stereotech "
+                 "с проверенными свойствами (выбирай из них); generic_* — общие профили без данных о свойствах.",
+                 _obj({"extruder": EXTRUDER}), self._list_materials, "material")
         self.add("set_material", "Выбрать материал по id из list_materials (например enduse_petg).",
                  _obj({"material_id": {"type": "string"}, "extruder": EXTRUDER}, ["material_id"]),
                  lambda material_id, extruder=0: api.set_material(material_id, extruder), "material")
+        self.add("set_extruder_enabled",
+                 "Включить или выключить экструдер. Если второй экструдер (1) не нужен для детали — выключи его, "
+                 "чтобы в проекте не оставался лишний материал. Основной экструдер (0) выключать нельзя.",
+                 _obj({"extruder": {"type": "integer", "description": "Номер экструдера (1 — второй)"},
+                       "enabled": {"type": "boolean"}}, ["extruder", "enabled"]),
+                 lambda extruder, enabled: api.set_extruder_enabled(extruder, enabled), "material")
         self.add("recommend_materials",
                  "Подобрать материал по инженерным требованиям из ТЗ. Возвращает материалы слайсера, отсортированные по числу невыполненных требований, сразу с ключевыми свойствами "
                  "(material_properties для них вызывать не нужно; рейтинги 0..3). "
@@ -170,10 +178,20 @@ class ToolRegistry:
         return {"requirements": requirements, "candidates": ranked[:max(1, int(limit))],
                 "note": "Свойства — типичные справочные значения; температуры печати берутся из профиля материала слайсера."}
 
+    def _list_materials(self, extruder=0):
+        data = self._api.list_materials(extruder)
+        for m in data.get("materials", []):
+            m["in_knowledge_base"] = m.get("id") in knowledge.MATERIALS
+        data["materials"].sort(key=lambda m: (not m["in_knowledge_base"], m.get("id", "")))
+        data["note"] = ("Выбирай материалы с in_knowledge_base=true (Stereotech): для них есть инженерные свойства. "
+                        "generic_* — общие профили Ultimaker без проверенных свойств, их не выбирай.")
+        return data
+
     def _material_properties(self, material_id):
         card = knowledge.material_card(material_id)
         if card is None:
-            raise ToolError("Нет данных о материале %s в базе знаний" % material_id)
+            raise ToolError("Для материала %s нет проверенных свойств: это общий профиль, а не материал Stereotech. "
+                            "Выбери материал из recommend_materials (материалы Stereotech из базы знаний)." % material_id)
         return card
 
     def _export_gcode(self, path=None):

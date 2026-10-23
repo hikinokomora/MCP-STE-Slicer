@@ -34,7 +34,7 @@ const TOOL_LABELS = {
   arrange_all: ["▦", "Авторасстановка"], delete_objects: ["🗑", "Удаление"],
   slice: ["🔪", "Слайсинг"], slice_status: ["⏱", "Статус слайсинга"],
   export_gcode: ["📄", "Экспорт G-code"], save_project: ["💾", "Сохранение 3MF"],
-  validate_gcode: ["✅", "Проверка G-code"],
+  validate_gcode: ["✅", "Проверка G-code"], set_extruder_enabled: ["🔌", "Экструдер вкл/выкл"],
 };
 const MODE_LABELS = { classic: "3D", cylindrical: "5D Spiral", cylindrical_full: "5D" };
 

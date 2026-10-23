@@ -36,6 +36,7 @@ if sys.platform == "win32":
                                      ctypes.c_int, ctypes.c_int, ctypes.c_uint]
     _user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
     _user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    _user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
     if ctypes.sizeof(ctypes.c_void_p) == 8:
         _SetWindowLongPtr = _user32.SetWindowLongPtrW
         _SetWindowLongPtr.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
@@ -57,6 +58,8 @@ PANEL_MARGIN_RIGHT = 28
 PANEL_MARGIN_TOP = 96       # below the slicer top bar
 PANEL_MARGIN_BOTTOM = 70    # above the slicer bottom bar
 PANEL_MIN_HEIGHT = 520
+PANEL_SHIFT_TO_CENTER = 0.15  # share of the slicer width the panel is moved from the right edge toward the center
+SLICER_LEFT_PANEL = 520       # do not cover the slicer settings panel on the left
 
 
 def find_edge():
@@ -81,27 +84,44 @@ def _rect(hwnd):
     return (r.left, r.top, r.right, r.bottom)
 
 
-def _find_chat_hwnd():
-    """Top-level Edge (Chromium) window whose title is our page title."""
-    found = []
+def _edge_windows():
+    """Visible top-level Chromium windows: [(hwnd, title, pid)]."""
+    result = []
 
     def callback(hwnd, _lparam):
-        length = _user32.GetWindowTextLengthW(hwnd)
-        if length <= 0 or not _user32.IsWindowVisible(hwnd):
-            return True
-        buf = ctypes.create_unicode_buffer(length + 1)
-        _user32.GetWindowTextW(hwnd, buf, length + 1)
-        if WINDOW_TITLE not in buf.value.lower():
+        if not _user32.IsWindowVisible(hwnd):
             return True
         cls = ctypes.create_unicode_buffer(64)
         _user32.GetClassNameW(hwnd, cls, 64)
-        if cls.value.startswith("Chrome_WidgetWin"):
-            found.append(hwnd)
-            return False
+        if not cls.value.startswith("Chrome_WidgetWin"):
+            return True
+        length = _user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return True
+        buf = ctypes.create_unicode_buffer(length + 1)
+        _user32.GetWindowTextW(hwnd, buf, length + 1)
+        pid = wintypes.DWORD()
+        _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        result.append((hwnd, buf.value, pid.value))
         return True
 
     _user32.EnumWindows(_EnumWindowsProc(callback), 0)
-    return found[0] if found else None
+    return result
+
+
+def _find_chat_hwnd(pids=()):
+    """The chat window: by page title, else by the Edge process we started, else by the local URL in the title."""
+    windows = _edge_windows()
+    for hwnd, title, _pid in windows:
+        if WINDOW_TITLE in title.lower():
+            return hwnd
+    for hwnd, _title, pid in windows:
+        if pid in pids:
+            return hwnd
+    for hwnd, title, _pid in windows:
+        if "127.0.0.1:" in title or "localhost:" in title:
+            return hwnd
+    return None
 
 
 class DockedChatWindow:
@@ -117,6 +137,7 @@ class DockedChatWindow:
         self._placed = False
         self._timer = None
         self._wait_ticks = 0
+        self._pids = set()          # Edge processes we started
 
     def available(self):
         return self._edge is not None
@@ -128,7 +149,7 @@ class DockedChatWindow:
             return False
         try:
             self._slicer = self._slicer_hwnd()
-            existing = self._chat if self._chat and _user32.IsWindow(self._chat) else _find_chat_hwnd()
+            existing = self._chat if self._chat and _user32.IsWindow(self._chat) else _find_chat_hwnd(self._pids)
             if existing:
                 self._chat = existing
                 _user32.ShowWindow(existing, SW_RESTORE)
@@ -146,7 +167,7 @@ class DockedChatWindow:
             return False
 
     def is_open(self):
-        hwnd = self._chat if self._chat and _user32.IsWindow(self._chat) else _find_chat_hwnd()
+        hwnd = self._chat if self._chat and _user32.IsWindow(self._chat) else _find_chat_hwnd(self._pids)
         if hwnd:
             self._chat = hwnd
         return bool(hwnd)
@@ -168,7 +189,8 @@ class DockedChatWindow:
         s = self._scale()
         width = int(PANEL_WIDTH * s)
         height = max(int(PANEL_MIN_HEIGHT * s), (bottom - top) - int((PANEL_MARGIN_TOP + PANEL_MARGIN_BOTTOM) * s))
-        x = right - width - int(PANEL_MARGIN_RIGHT * s)
+        x = right - width - int(PANEL_MARGIN_RIGHT * s) - int((right - left) * PANEL_SHIFT_TO_CENTER)
+        x = max(x, left + int(SLICER_LEFT_PANEL * s))
         y = top + int(PANEL_MARGIN_TOP * s)
         return x, y, width, height
 
@@ -183,7 +205,8 @@ class DockedChatWindow:
             args += ["--window-position=%d,%d" % (int(x / s), int(y / s)),
                      "--window-size=%d,%d" % (int(w / s), int(h / s))]
         flags = 0x00000008 | 0x00000200 if sys.platform == "win32" else 0  # DETACHED_PROCESS | NEW_PROCESS_GROUP
-        subprocess.Popen(args, close_fds=True, creationflags=flags)
+        proc = subprocess.Popen(args, close_fds=True, creationflags=flags)
+        self._pids.add(proc.pid)
         Logger.log("i", "AIAssistant: opened chat in Edge app mode")
 
     def _ensure_timer(self):
@@ -209,15 +232,19 @@ class DockedChatWindow:
                     self._chat = None
                     self._timer.stop()
                     return
-                self._chat = _find_chat_hwnd()
+                self._chat = _find_chat_hwnd(self._pids)
                 if not self._chat:
                     self._wait_ticks += 1
+                    if self._wait_ticks == 16:  # ~4 s: log what Edge windows exist, to diagnose the lookup
+                        Logger.log("w", "AIAssistant: chat window not found yet; Chromium windows: %s",
+                                   [(t, p) for _h, t, p in _edge_windows()])
                     if self._wait_ticks > 120:  # ~30 s: Edge did not show up, stop looking
                         self._timer.stop()
                     return
                 # owned window: stays above the slicer, minimizes with it
                 _SetWindowLongPtr(self._chat, GWLP_HWNDPARENT, self._slicer)
                 self._placed = False
+                Logger.log("i", "AIAssistant: chat window attached to the slicer window")
 
             if _user32.IsIconic(self._slicer):
                 return
