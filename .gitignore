@@ -1,0 +1,21 @@
+# Материалы хакатона: в PDF лежит API-ключ LLM, модели слишком большие
+Info/
+Models/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Результаты нарезки и сборка архива
+*.gcode
+*.zip
+
+# Локальные секреты и настройки
+.env
+*.local.json
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
