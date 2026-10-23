@@ -224,6 +224,15 @@ def analyze(tri):
         result["is_body_of_revolution"] = rev["symmetry_score"] >= 0.85 and rev["round_fraction"] >= 0.6
         result["is_shaft_with_features"] = (not result["is_body_of_revolution"]) and rev["round_fraction"] >= 0.4
         result["has_axial_bore"] = rev["bore_diameter_mm"] >= 4.0
+        # 5D Spiral needs every cylindrical layer to be a closed ring: a tube/sleeve/ring whose material fills
+        # the whole annulus between the bore and the outer diameter, with a thin wall relative to the radius.
+        r_out = rev["outer_diameter_mm"] / 2.0
+        r_in = rev["bore_diameter_mm"] / 2.0
+        annulus = math.pi * (r_out ** 2 - r_in ** 2) * rev["length_along_axis_mm"]
+        rev["annulus_fill"] = round(volume / annulus, 2) if annulus > 0 else 0.0
+        rev["wall_to_radius"] = round((r_out - r_in) / r_out, 2) if r_out > 0 else 1.0
+        result["spiral_candidate"] = bool(result["is_body_of_revolution"] and result["has_axial_bore"]
+                                          and rev["annulus_fill"] >= 0.8 and rev["wall_to_radius"] <= 0.25)
 
     rot, metrics, down = best_flat_orientation(tri)
     result["best_3d_orientation"] = {"down_direction": down, "metrics": metrics,
@@ -245,6 +254,15 @@ def _hints(r):
         rev = r["revolution_by_axis"][r["revolution_axis"]]
         hints.append("Вал вдоль оси %s: %.0f%% длины — круглые сечения, остальное — несимметричные элементы (кулачок, лопасти)." % (
             r["revolution_axis"], rev["round_fraction"] * 100))
+    if r.get("revolution_axis"):
+        rev = r["revolution_by_axis"][r["revolution_axis"]]
+        if r.get("spiral_candidate"):
+            hints.append("Тонкостенная втулка/труба (стенка %.0f%% радиуса, заполнение кольца %.0f%%) — кандидат на 5D Spiral (cylindrical)." % (
+                rev["wall_to_radius"] * 100, rev["annulus_fill"] * 100))
+        elif r.get("is_body_of_revolution") or r.get("is_shaft_with_features"):
+            hints.append("Не для 5D Spiral: материал занимает %.0f%% кольца между отверстием и наружным диаметром "
+                         "(лопасти, рёбра, гофры или переменный внутренний диаметр), стенка %.0f%% радиуса." % (
+                             rev["annulus_fill"] * 100, rev["wall_to_radius"] * 100))
     cur = r["current_orientation"]
     if cur["overhang_area_mm2"] > 100:
         hints.append("В текущей ориентации нависания %.0f мм² — нужны поддержки или другая ориентация." % cur["overhang_area_mm2"])
