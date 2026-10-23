@@ -3,79 +3,101 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>STE Slicer AI Assistant</title>
+  <meta name="color-scheme" content="light">
+  <title>slicer assistant</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="logo">◆</span>
-      <div>
-        <div class="title">AI Assistant</div>
-        <div class="subtitle">STE Slicer · 3D / 5D</div>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <svg class="ai-mark" viewBox="0 0 40 40" aria-hidden="true">
+          <g fill="currentColor">
+            <circle cx="20" cy="4" r="2.2"/><circle cx="31.3" cy="8.7" r="2.2"/><circle cx="36" cy="20" r="2.2"/>
+            <circle cx="31.3" cy="31.3" r="2.2"/><circle cx="20" cy="36" r="2.2"/><circle cx="8.7" cy="31.3" r="2.2"/>
+            <circle cx="4" cy="20" r="2.2"/><circle cx="8.7" cy="8.7" r="2.2"/>
+          </g>
+          <text x="20" y="24.5" text-anchor="middle" font-size="12.5" font-weight="600" fill="currentColor" font-family="Segoe UI, Roboto, sans-serif">AI</text>
+        </svg>
+        <span class="brand-name">slicer assistant</span>
       </div>
-    </div>
-    <div class="top-actions">
-      <span id="status-pill" class="pill idle">готов</span>
-      <button id="btn-new" class="ghost" title="Новый диалог">Новый диалог</button>
-      <button id="btn-settings" class="ghost" title="Настройки LLM">Настройки</button>
-    </div>
-  </header>
-
-  <main class="layout">
-    <section class="chat">
-      <div id="messages" class="messages">
-        <div id="welcome" class="welcome">
-          <h2>Опишите задачу печати</h2>
-          <p>Приложите модель (STL/OBJ/3MF), фото или ТЗ (.docx) и напишите, что нужно получить.
-             Ассистент выберет режим 3D/5D, материал и настройки, сориентирует модель, нарежет её и объяснит решения.</p>
-          <div class="examples">
-            <button class="example">Кронштейн под нагрузку, PETG, без поддержек</button>
-            <button class="example">Подготовь проект по приложенному ТЗ и модели, сохрани 3MF и G-code</button>
-            <button class="example">Покажи, что сейчас настроено в слайсере</button>
-          </div>
-        </div>
+      <div class="top-actions">
+        <span id="status-pill" class="pill idle" title="Состояние агента">готов</span>
+        <button id="btn-new" class="icon-btn" type="button" title="Новый диалог" aria-label="Новый диалог">
+          <svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button id="btn-settings" class="icon-btn" type="button" title="Настройки LLM" aria-label="Настройки LLM">
+          <svg viewBox="0 0 24 24"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.5-2-3.4-2.3 1a7.7 7.7 0 0 0-2.6-1.5L14.2 2.6h-4l-.3 2.5a7.7 7.7 0 0 0-2.6 1.5l-2.3-1-2 3.4 2 1.5a7.6 7.6 0 0 0 0 3l-2 1.5 2 3.4 2.3-1a7.7 7.7 0 0 0 2.6 1.5l.3 2.5h4l.3-2.5a7.7 7.7 0 0 0 2.6-1.5l2.3 1 2-3.4Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+        </button>
       </div>
+    </header>
 
-      <div id="dropzone" class="dropzone hidden">Отпустите файлы, чтобы прикрепить</div>
-
-      <form id="composer" class="composer">
-        <div id="chips" class="chips"></div>
-        <div class="composer-row">
-          <label class="attach" title="Прикрепить файл">
-            <input id="file-input" type="file" multiple accept=".stl,.obj,.3mf,.jpg,.jpeg,.png,.docx,.txt">
-            <span>＋</span>
-          </label>
-          <textarea id="input" rows="1" placeholder="Например: колесо конвейера, нагрузка 18 кг, чистый цех…"></textarea>
-          <button id="btn-send" type="submit" class="primary">Отправить</button>
-          <button id="btn-stop" type="button" class="danger hidden">Стоп</button>
-        </div>
-      </form>
-    </section>
-
-    <aside class="side">
-      <div class="card">
-        <div class="card-title">Слайсер</div>
+    <details id="panel" class="panel">
+      <summary>
+        <span id="summary-line" class="summary-line">Слайсер: загрузка…</span>
+        <span class="chev" aria-hidden="true"></span>
+      </summary>
+      <div class="panel-body">
         <dl id="scene" class="kv"><dt>Состояние</dt><dd>загрузка…</dd></dl>
-        <button id="btn-refresh" class="ghost small">Обновить</button>
-      </div>
-      <div class="card">
-        <div class="card-title">Слайсинг</div>
-        <div id="slice-state" class="muted">не запускался</div>
-        <div class="progress"><div id="slice-bar" class="bar"></div></div>
+        <div class="panel-row">
+          <span id="slice-state" class="muted">Слайсинг не запускался</span>
+          <button id="btn-refresh" class="link-btn" type="button">Обновить</button>
+        </div>
         <dl id="slice-result" class="kv"></dl>
-      </div>
-      <div class="card">
-        <div class="card-title">Файлы результата</div>
+        <div class="panel-sub">Файлы результата</div>
         <ul id="files" class="files"><li class="muted">пока нет</li></ul>
       </div>
-    </aside>
-  </main>
+      <div class="progress"><div id="slice-bar" class="bar"></div></div>
+    </details>
+
+    <main id="messages" class="messages">
+      <div id="welcome" class="welcome">
+        <button id="drop-target" class="drop-target" type="button">
+          <svg class="drop-ico" viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M12 6h17l9 9v27H12Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M29 6v9h9" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M25 35V22m-5.5 5.5L25 22l5.5 5.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="drop-title">Перетащите модель или ТЗ</span>
+          <span class="drop-hint">STL · OBJ · 3MF · JPG · PNG · DOCX — или нажмите, чтобы выбрать</span>
+        </button>
+        <div class="examples">
+          <button class="example" type="button">Подготовь проект по приложенному ТЗ и модели</button>
+          <button class="example" type="button">Кронштейн под нагрузку, PETG, без поддержек</button>
+          <button class="example" type="button">Что сейчас настроено в слайсере?</button>
+        </div>
+      </div>
+    </main>
+
+    <div id="dropzone" class="dropzone hidden">
+      <div class="dropzone-inner">Отпустите, чтобы прикрепить</div>
+    </div>
+
+    <form id="composer" class="composer">
+      <div id="chips" class="chips"></div>
+      <div class="input-box">
+        <label class="attach" title="Прикрепить файл" aria-label="Прикрепить файл">
+          <input id="file-input" type="file" multiple accept=".stl,.obj,.3mf,.jpg,.jpeg,.png,.docx,.txt">
+          <svg viewBox="0 0 24 24"><path d="M20 11.5 12.3 19.2a5 5 0 0 1-7.1-7.1l8-8a3.4 3.4 0 0 1 4.8 4.8l-8 8a1.7 1.7 0 0 1-2.4-2.4l7.3-7.3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </label>
+        <textarea id="input" rows="1" placeholder="Опишите задачу печати…"></textarea>
+      </div>
+      <div class="composer-actions">
+        <span class="hint">Enter — отправить, Shift+Enter — новая строка</span>
+        <button id="btn-stop" type="button" class="send-btn stop hidden" title="Остановить" aria-label="Остановить">
+          <svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg>
+        </button>
+        <button id="btn-send" type="submit" class="send-btn" title="Отправить" aria-label="Отправить">
+          <svg viewBox="0 0 24 24"><path d="M12 19V6m-6 6 6-6 6 6M5 20h14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+    </form>
+  </div>
 
   <dialog id="settings">
     <form method="dialog" id="settings-form" class="settings">
       <h3>Подключение к LLM</h3>
-      <p class="muted">OpenAI-совместимый API (Chat Completions с tool calling). Ключ хранится в настройках STE Slicer и не попадает в исходники плагина.</p>
+      <p class="muted small">OpenAI-совместимый API (Chat Completions с tool calling). Ключ хранится в настройках STE Slicer и не попадает в исходники плагина.</p>
       <label>Base URL<input name="base_url" required placeholder="https://…/v1"></label>
       <label>API key<input name="api_key" type="password" autocomplete="off" placeholder="sk-…"></label>
       <div id="key-hint" class="muted small"></div>

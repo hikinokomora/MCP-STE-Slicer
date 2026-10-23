@@ -7,7 +7,19 @@ const els = {
   dropzone: $("dropzone"), status: $("status-pill"), scene: $("scene"), sliceState: $("slice-state"),
   sliceBar: $("slice-bar"), sliceResult: $("slice-result"), files: $("files"), settings: $("settings"),
   settingsForm: $("settings-form"), settingsMsg: $("settings-msg"), keyHint: $("key-hint"),
+  summaryLine: $("summary-line"), dropTarget: $("drop-target"),
 };
+let sceneSummary = "Слайсер: загрузка…";
+let sliceSummary = "";
+let firstBatchDone = false;
+
+function renderSummary() {
+  els.summaryLine.textContent = sceneSummary + (sliceSummary ? " · " + sliceSummary : "");
+}
+
+function updateSendState() {
+  els.composer.classList.toggle("empty", !els.input.value.trim() && !attachments.length);
+}
 
 const TOOL_LABELS = {
   get_scene_info: ["🔎", "Состояние слайсера"], list_profiles: ["📋", "Список профилей"],
@@ -175,14 +187,17 @@ function handleEvent(ev) {
     case "tool_result": renderToolResult(ev); break;
     case "slice_state":
       els.sliceState.textContent = { processing: "идёт слайсинг…", done: "готово", error: "ошибка", not_started: "не запускался" }[ev.state] || ev.state;
-      if (ev.state === "processing") els.sliceBar.style.width = "2%";
+      if (ev.state === "processing") { els.sliceBar.style.width = "2%"; sliceSummary = "слайсинг…"; renderSummary(); }
+      if (ev.state === "error") { sliceSummary = "ошибка слайсинга"; renderSummary(); }
       if (ev.state === "done") els.sliceBar.style.width = "100%";
       break;
     case "slice_progress":
       els.sliceBar.style.width = Math.max(2, Math.round(ev.progress * 100)) + "%";
       els.sliceState.textContent = "идёт слайсинг… " + Math.round(ev.progress * 100) + "%";
+      sliceSummary = "слайсинг " + Math.round(ev.progress * 100) + "%"; renderSummary();
       break;
     case "slice_result": renderSliceResult(ev); break;
+    case "open_settings": if (firstBatchDone) openSettings(); break;
   }
 }
 
@@ -231,6 +246,8 @@ function renderSliceResult(r) {
     ["Слайсинг", (r.slicing_seconds || "?") + " с"],
   ];
   els.sliceResult.innerHTML = rows.map(([k, v]) => "<dt>" + k + "</dt><dd>" + escapeHtml(v) + "</dd>").join("");
+  sliceSummary = (r.print_time || "") + (r.material_total_g != null ? " · " + r.material_total_g + " г" : "");
+  renderSummary();
 }
 
 function addFile(kind, path) {
@@ -248,8 +265,9 @@ async function poll() {
         lastEventId = Math.max(lastEventId, ev.id);
         handleEvent(ev);
       }
+      firstBatchDone = true;
     } catch (e) {
-      els.status.textContent = "нет связи со слайсером";
+      els.status.textContent = "нет связи";
       els.status.className = "pill error";
       await new Promise((r) => setTimeout(r, 2000));
     }
@@ -269,8 +287,13 @@ async function refreshState() {
       ["Изменено", Object.keys(scene.changed_settings || {}).length + " настроек"],
     ];
     els.scene.innerHTML = rows.map(([k, v]) => "<dt>" + k + "</dt><dd>" + (k === "Модели" ? v : escapeHtml(v == null ? "—" : v)) + "</dd>").join("");
+    sceneSummary = [MODE_LABELS[scene.print_mode] || scene.print_mode, scene.material && scene.material.name, scene.profile_name]
+      .filter(Boolean).join(" · ") || "Слайсер";
+    renderSummary();
   } catch (e) {
     els.scene.innerHTML = "<dt>Ошибка</dt><dd>" + escapeHtml(e.message) + "</dd>";
+    sceneSummary = "Нет связи со слайсером";
+    renderSummary();
   }
 }
 
@@ -284,6 +307,7 @@ function renderChips() {
     chip.querySelector("button").onclick = () => { attachments.splice(idx, 1); renderChips(); };
     els.chips.appendChild(chip);
   });
+  updateSendState();
 }
 
 async function addFiles(fileList) {
@@ -325,7 +349,8 @@ async function send(text) {
 
 function autosize() {
   els.input.style.height = "auto";
-  els.input.style.height = Math.min(200, els.input.scrollHeight) + "px";
+  els.input.style.height = Math.min(180, els.input.scrollHeight) + "px";
+  updateSendState();
 }
 
 // ------------------------------------------------------------------ settings
@@ -357,6 +382,7 @@ els.input.addEventListener("keydown", (e) => {
 els.input.addEventListener("input", autosize);
 els.stop.addEventListener("click", () => api("/api/stop", { method: "POST" }));
 els.fileInput.addEventListener("change", () => { addFiles(els.fileInput.files); els.fileInput.value = ""; });
+els.dropTarget.addEventListener("click", () => els.fileInput.click());
 document.querySelectorAll(".example").forEach((b) => b.addEventListener("click", () => { els.input.value = b.textContent; autosize(); els.input.focus(); }));
 $("btn-new").addEventListener("click", async () => {
   try { await api("/api/reset", { method: "POST" }); } catch (e) { addMessage("error", escapeHtml(e.message)); }
@@ -388,6 +414,7 @@ window.addEventListener("drop", (e) => {
 });
 
 (async function init() {
+  updateSendState();
   refreshState();
   try {
     const s = await api("/api/settings");

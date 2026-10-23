@@ -25,6 +25,7 @@ from .agent.llm_client import LLMClient, LLMError
 from .agent.mcp_server import MCPServer
 from .agent.slicer_api import SlicerAPI
 from .agent.tools import ToolRegistry
+from .dock import DockedChatWindow
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(PLUGIN_DIR, "web")
@@ -66,6 +67,8 @@ class AIAssistant(Extension):
         self._server = None
         self._server_lock = threading.Lock()
         self._upload_dir = os.path.join(Resources.getDataStoragePath(), "ai_assistant", "uploads")
+        # chat as an Edge app window attached to the slicer (falls back to the default browser)
+        self._dock = DockedChatWindow(self._app, os.path.join(Resources.getDataStoragePath(), "ai_assistant", "edge_profile"))
 
         # start the server once the UI is up so external MCP clients can connect right away
         self._app.engineCreatedSignal.connect(self._startServer)
@@ -99,10 +102,18 @@ class AIAssistant(Extension):
         return "http://127.0.0.1:%d/%s" % (self._startServer(), fragment)
 
     def showChat(self):
-        webbrowser.open(self.url())
+        url = self.url()
+        if not self._dock.open(url):
+            webbrowser.open(url)
 
     def showSettings(self):
-        webbrowser.open(self.url("#settings"))
+        if self._dock.available() and self._dock.is_open():
+            self._bus.emit("open_settings")  # the open page shows its settings dialog
+            self._dock.open(self.url())
+            return
+        url = self.url("#settings")
+        if not self._dock.open(url):
+            webbrowser.open(url)
 
     def openOutputDir(self):
         path = self.getSetting("output_dir")
