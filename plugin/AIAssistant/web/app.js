@@ -22,20 +22,19 @@ function updateSendState() {
 }
 
 const TOOL_LABELS = {
-  get_scene_info: ["🔎", "Состояние слайсера"], list_profiles: ["📋", "Список профилей"],
-  set_profile: ["🎚", "Профиль качества"], create_profile: ["💾", "Новый профиль"],
-  list_materials: ["🧵", "Список материалов"], set_material: ["🧵", "Материал"],
-  recommend_materials: ["🧪", "Подбор материала по ТЗ"], material_properties: ["🧪", "Свойства материала"],
-  get_settings: ["⚙", "Чтение настроек"], find_settings: ["⚙", "Поиск настроек"],
-  set_settings: ["🛠", "Изменение настроек"], reset_settings: ["↺", "Сброс настроек"],
-  set_print_mode: ["🌀", "Режим печати 3D/5D"], load_model: ["📦", "Загрузка модели"],
-  list_objects: ["📦", "Объекты на столе"], analyze_model: ["📐", "Анализ геометрии"],
-  orient_model: ["🧭", "Ориентация"], transform_model: ["↔", "Перемещение/поворот"],
-  arrange_all: ["▦", "Авторасстановка"], delete_objects: ["🗑", "Удаление"],
-  slice: ["🔪", "Слайсинг"], slice_status: ["⏱", "Статус слайсинга"],
-  export_gcode: ["📄", "Экспорт G-code"], save_project: ["💾", "Сохранение 3MF"],
-  validate_gcode: ["✅", "Проверка G-code"], set_extruder_enabled: ["🔌", "Экструдер вкл/выкл"],
-  save_profile: ["💾", "Сохранение профиля"], compare_variants: ["⚖", "Сравнение вариантов"],
+  get_scene_info: ["", "Состояние слайсера"], list_profiles: ["", "Список профилей"],
+  set_profile: ["", "Профиль качества"], create_profile: ["", "Новый профиль"],
+  list_materials: ["", "Список материалов"], set_material: ["", "Материал"],
+  recommend_materials: ["", "Подбор материала по ТЗ"], material_properties: ["", "Свойства материала"],
+  get_settings: ["", "Чтение настроек"], find_settings: ["", "Поиск настроек"],
+  set_settings: ["", "Изменение настроек"], reset_settings: ["", "Сброс настроек"],
+  set_print_mode: ["", "Режим печати 3D/5D"], load_model: ["", "Загрузка модели"],
+  list_objects: ["", "Объекты на столе"], analyze_model: ["", "Анализ геометрии"],
+  orient_model: ["", "Ориентация"], transform_model: ["", "Перемещение/поворот"],
+  arrange_all: ["", "Авторасстановка"], delete_objects: ["", "Удаление"],
+  slice: ["", "Слайсинг"], slice_status: ["", "Статус слайсинга"],
+  export_gcode: ["", "Экспорт G-code"], save_project: ["", "Сохранение 3MF"],
+  validate_gcode: ["", "Проверка G-code"], set_extruder_enabled: ["", "Экструдер вкл/выкл"],
 };
 const MODE_LABELS = { classic: "3D", cylindrical: "5D Spiral", cylindrical_full: "5D" };
 
@@ -54,6 +53,9 @@ async function api(path, options = {}) {
   if (!res.ok) throw new Error(data.error || res.statusText);
   return data;
 }
+
+const EMOJI_RE = /[\p{Extended_Pictographic}\uFE0F\u200D]/gu;
+function stripEmoji(s) { return String(s || "").replace(EMOJI_RE, "").replace(/[ \t]{2,}/g, " "); }
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -163,18 +165,18 @@ function handleEvent(ev) {
       els.welcome.classList.remove("hidden");
       break;
     case "user_message": {
-      const atts = (ev.attachments || []).map((a) => '<span class="att">📎 ' + escapeHtml(a.name) + "</span>").join("");
+      const atts = (ev.attachments || []).map((a) => '<span class="att">' + escapeHtml(a.name) + "</span>").join("");
       addMessage("user", escapeHtml(ev.text || "") + (atts ? "<div>" + atts + "</div>" : ""));
       break;
     }
     case "assistant_message":
-      addMessage("assistant", markdown(ev.text));
+      addMessage("assistant", markdown(stripEmoji(ev.text)));
       break;
     case "assistant_note":
-      addMessage("note", markdown(ev.text));
+      addMessage("note", markdown(stripEmoji(ev.text)));
       break;
     case "warning":
-      addMessage("warning", "⚠ " + escapeHtml(ev.text));
+      addMessage("warning", "Внимание: " + escapeHtml(ev.text));
       break;
     case "error":
       addMessage("error", "Ошибка: " + escapeHtml(ev.text));
@@ -204,7 +206,7 @@ function handleEvent(ev) {
 
 function renderToolCall(ev) {
   els.welcome.classList.add("hidden");
-  const [ico, label] = TOOL_LABELS[ev.name] || ["🔧", ev.name];
+  const [ico, label] = TOOL_LABELS[ev.name] || ["", ev.name];
   const det = document.createElement("details");
   det.className = "tool";
   det.innerHTML =
@@ -223,7 +225,7 @@ function renderToolResult(ev) {
   if (!det) return;
   const st = det.querySelector(".st");
   st.className = "st " + (ev.is_error ? "err" : "ok");
-  st.textContent = ev.is_error ? "ошибка" : "✓";
+  st.textContent = ev.is_error ? "ошибка" : "готово";
   det.classList.add(ev.is_error ? "err" : "ok");
   const pre = document.createElement("pre");
   pre.textContent = "→ " + JSON.stringify(ev.result, null, 2);
@@ -304,7 +306,7 @@ function renderChips() {
   attachments.forEach((a, idx) => {
     const chip = document.createElement("span");
     chip.className = "chip" + (a.ready ? "" : " loading");
-    chip.innerHTML = "📎 " + escapeHtml(a.name) + (a.ready ? "" : " …") + ' <button type="button" title="Убрать">✕</button>';
+    chip.innerHTML = escapeHtml(a.name) + (a.ready ? "" : " …") + ' <button type="button" title="Убрать">×</button>';
     chip.querySelector("button").onclick = () => { attachments.splice(idx, 1); renderChips(); };
     els.chips.appendChild(chip);
   });
@@ -399,8 +401,8 @@ $("btn-test").addEventListener("click", async () => {
   try {
     await saveSettings();
     const r = await api("/api/test_llm", { method: "POST" });
-    els.settingsMsg.textContent = r.ok ? "✓ LLM отвечает за " + r.latency_s + " с: «" + r.reply + "»" : "✗ " + r.error;
-  } catch (err) { els.settingsMsg.textContent = "✗ " + err.message; }
+    els.settingsMsg.textContent = r.ok ? "LLM отвечает за " + r.latency_s + " с: «" + r.reply + "»" : "Ошибка: " + r.error;
+  } catch (err) { els.settingsMsg.textContent = "Ошибка: " + err.message; }
 });
 
 let dragDepth = 0;

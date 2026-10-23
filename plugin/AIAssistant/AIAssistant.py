@@ -132,21 +132,7 @@ class AIAssistant(Extension):
             f.write(data)
         info = {"id": upload_id, "name": safe, "path": path, "size": len(data)}
         self._uploads[upload_id] = info
-        return info
-
-    LOCAL_ATTACH_EXT = (".stl", ".obj", ".3mf", ".jpg", ".jpeg", ".png", ".docx", ".txt")
-
-    def register_local_file(self, path):
-        """Attach a file that is already on this computer without copying it
-        (POST /api/upload?path=...; used by scripted runs and external tools)."""
-        path = os.path.abspath(path)
-        if not os.path.isfile(path):
-            raise ValueError("Файл не найден: %s" % path)
-        if os.path.splitext(path)[1].lower() not in self.LOCAL_ATTACH_EXT:
-            raise ValueError("Неподдерживаемый тип файла: %s" % os.path.basename(path))
-        upload_id = uuid.uuid4().hex[:12]
-        info = {"id": upload_id, "name": os.path.basename(path), "path": path, "size": os.path.getsize(path)}
-        self._uploads[upload_id] = info
+        self._api.remember_upload(safe, path)
         return info
 
     def settings_payload(self):
@@ -273,11 +259,8 @@ def _make_handler(ext):
                         return
                     self._send(200, {"ok": True})
                 elif path == "/api/upload":
-                    query = parse_qs(parsed.query)
-                    if query.get("path"):
-                        self._send(200, ext.register_local_file(query["path"][0]))
-                    else:
-                        self._send(200, ext.store_upload(query.get("name", ["file"])[0], self._body()))
+                    name = parse_qs(parsed.query).get("name", ["file"])[0]
+                    self._send(200, ext.store_upload(name, self._body()))
                 elif path == "/api/settings":
                     self._send(200, ext.update_settings(self._json()))
                 elif path == "/api/test_llm":
@@ -287,7 +270,6 @@ def _make_handler(ext):
                         self._send(200, {"ok": False, "error": str(e)})
                 elif path == "/api/stop":
                     ext._agent.stop()
-                    ext._api.cancel_slice()
                     self._send(200, {"ok": True})
                 elif path == "/api/reset":
                     if ext._agent.is_busy():
