@@ -78,6 +78,12 @@ class ToolRegistry:
                  "Сохранить текущие изменённые настройки как новый пользовательский профиль и активировать его.",
                  _obj({"name": {"type": "string"}}, ["name"]),
                  lambda name: api.create_profile(name), "profile")
+        self.add("save_profile",
+                 "Сохранить текущие изменения настроек в активный пользовательский профиль (как «Обновить профиль "
+                 "текущими настройками»). Если активен встроенный профиль качества — укажи name: будет создан "
+                 "новый пользовательский профиль. Вызывай только по просьбе пользователя.",
+                 _obj({"name": {"type": "string", "description": "имя нового профиля, если пользовательский профиль не активен"}}),
+                 lambda name=None: api.save_profile(name), "profile")
         self.add("list_materials",
                  "Материалы, доступные для экструдера текущего принтера. in_knowledge_base=true — материал Stereotech "
                  "с проверенными свойствами (выбирай из них); generic_* — общие профили без данных о свойствах.",
@@ -158,6 +164,14 @@ class ToolRegistry:
         # --- slicing
         self.add("slice", "Запустить слайсинг и дождаться результата: время печати, расход материала.",
                  _obj(), lambda: api.slice(), "slice")
+        self.add("compare_variants",
+                 "Нарезать 2–3 варианта настроек поверх текущих и сравнить время печати и расход материала "
+                 "(по умолчанию: прочно / быстро / экономно). После сравнения настройки возвращаются к исходным; "
+                 "apply=имя варианта оставляет этот вариант. В 5D каждый вариант режется заново — это может занять минуты.",
+                 _obj({"variants": {"type": "array", "description": "[{\"name\": \"прочно\", \"settings\": {\"infill_sparse_density\": 60}}, ...]",
+                                    "items": {"type": "object"}},
+                       "apply": {"type": "string", "description": "имя варианта, который оставить после сравнения"}}),
+                 lambda variants=None, apply=None: api.compare_variants(variants, apply), "slice")
         self.add("slice_status", "Состояние и прогресс слайсинга.", _obj(), lambda: api.slice_status(), "slice")
         self.add("export_gcode", "Сохранить G-code после слайсинга. Без path — в папку результатов по имени модели (result.gcode).",
                  _obj({"path": {"type": "string"}}), self._export_gcode, "slice")
