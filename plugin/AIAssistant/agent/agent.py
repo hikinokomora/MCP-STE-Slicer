@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """Dialogue loop: user message -> LLM -> MCP tool calls -> LLM -> ... -> answer."""
 import base64
-import importlib
 import json
 import os
 import re
@@ -47,11 +46,6 @@ class Agent:
 
     # ------------------------------------------------------------------ state
     def reset(self):
-        # a new dialogue picks up edits of the knowledge base / system prompt without restarting the slicer
-        try:
-            importlib.reload(knowledge)
-        except Exception:
-            Logger.logException("w", "AIAssistant: could not reload the knowledge base")
         self._messages = [{"role": "system", "content": knowledge.SYSTEM_PROMPT}]
 
     def is_busy(self):
