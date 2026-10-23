@@ -19,3 +19,7 @@ __pycache__/
 .idea/
 Thumbs.db
 .DS_Store
+
+# Локальные данные плагина (настройки, загруженные файлы)
+plugin/**/data/
+*.log
