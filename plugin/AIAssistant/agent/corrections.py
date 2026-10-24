@@ -171,6 +171,8 @@ def spec_problem(material_id, requirements):
     ranked = knowledge.score_materials(requirements)
     if not ranked:
         return None
+    if requirements.get("flexible") is False:  # a flexible material for a rigid part is disqualifying
+        ranked.sort(key=lambda r: "flexible" in r["failed"])
     best_failed = set(ranked[0]["failed"])
     mine = next((r for r in ranked if r["id"] == material_id), None)
     if mine is None:

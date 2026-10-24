@@ -112,6 +112,7 @@ class ToolRegistry:
                  _obj({"requirements": {"type": "object", "description": "Требования, например {\"min_hdt_c\": 130, \"max_density\": 1.2, \"alkali\": 3}"},
                        "part_type": {"type": "string", "enum": corrections.PART_TYPE_IDS,
                                      "description": "функция детали: " + "; ".join("%s — %s" % p for p in corrections.PART_TYPES)},
+                       "elongation_from_spec": {"type": "boolean", "description": "число min_elongation_pct прямо написано в ТЗ"},
                        "limit": {"type": "integer", "default": 6}}, ["requirements"]),
                  self._recommend_materials, "material")
         self.add("propose_correction",
@@ -212,13 +213,43 @@ class ToolRegistry:
                  _obj({"path": {"type": "string"}}), self._validate_gcode, "slice")
 
     # ------------------------------------------------------------------ handlers
-    def _recommend_materials(self, requirements, limit=6, part_type=None):
+    # Parts that keep their shape by function: a flexible material is never right for them unless the spec says so.
+    RIGID_PART_TYPES = ("gear", "bushing", "shaft", "housing", "bracket", "impeller", "fastener", "decor", "tooling")
+    RIGID_MAX_ELONGATION = 3    # "tough, thin parts must not break off" = not brittle; glass-filled ABSPA G8 has 4 %, rubber 50 %+
+
+    def _guard_requirements(self, requirements, part_type, elongation_from_spec):
+        """The LLM translates the spec into numbers and sometimes inflates them ("toughness" -> elongation >= 50 %,
+        which leaves only TPU for a decorative figurine). Fixed here in code, reported back to the agent."""
+        reqs = dict(requirements or {})
+        notes = []
+        if part_type in self.RIGID_PART_TYPES:
+            if "flexible" not in reqs:
+                reqs["flexible"] = False
+                notes.append("добавлено flexible=false: деталь по функции жёсткая (%s), а гибкость в ТЗ не требуется"
+                             % corrections.PART_TYPE_LABELS.get(part_type, part_type))
+            if reqs.get("flexible") is False and not elongation_from_spec:
+                try:
+                    value = float(reqs.get("min_elongation_pct"))
+                except (TypeError, ValueError):
+                    value = None
+                if value is not None and value > self.RIGID_MAX_ELONGATION:
+                    reqs["min_elongation_pct"] = self.RIGID_MAX_ELONGATION
+                    notes.append("min_elongation_pct %g → %d: «вязкость / не отламываются тонкие элементы» для жёсткой "
+                                 "детали означает «не хрупкий», а удлинение больше 20 %% — это резиноподобные материалы"
+                                 % (value, self.RIGID_MAX_ELONGATION))
+        return reqs, notes
+
+    def _recommend_materials(self, requirements, limit=6, part_type=None, elongation_from_spec=False):
+        requirements, guard_notes = self._guard_requirements(requirements, part_type, elongation_from_spec)
         available = None
         try:
             available = set(m["id"] for m in self._api.list_materials(0)["materials"])
         except Exception:
             pass
         ranked = knowledge.score_materials(requirements, available)
+        if requirements.get("flexible") is False:
+            # a flexible material for a rigid part is disqualifying, not "one failed requirement among others"
+            ranked.sort(key=lambda r: "flexible" in r["failed"])
         applied = []
         if self._corrections is not None:
             ranked, applied = corrections.apply(ranked, requirements, part_type, self._corrections.all())
@@ -228,6 +259,9 @@ class ToolRegistry:
                   "features": corrections.features_from_requirements(requirements),
                   "candidates": ranked[:max(1, int(limit))],
                   "note": "Свойства — типичные справочные значения; температуры печати берутся из профиля материала слайсера."}
+        if guard_notes:
+            result["requirements_adjusted"] = guard_notes
+            result["note"] += " Требования скорректированы кодом (requirements_adjusted) — учти и коротко упомяни в итоге."
         if applied:
             result["applied_corrections"] = applied
             result["note"] += (" Учтены корректировки пользователей (applied_corrections): они меняют порядок только среди "
@@ -325,6 +359,34 @@ class ToolRegistry:
                      "скажи и укажи, что на k принтерах параллельно оно делится на k."),
         }
 
+    FEATURE_LABELS = {"inset_0": "внешняя стенка", "inset_x": "внутренние стенки", "skin": "верх/низ",
+                      "infill": "заполнение", "support": "поддержки", "support_infill": "заполнение поддержек",
+                      "support_interface": "разделительный слой поддержек", "travel": "холостые перемещения",
+                      "retract": "ретракты", "skirt": "юбка/кайма", "prime_tower": "башня очистки", "none": "прочее"}
+
+    def _time_breakdown(self):
+        """Where the print time goes (the slicer's own per-feature estimate), largest first."""
+        def read():
+            info = self._api._app.getPrintInformation()
+            getter = getattr(info, "getFeaturePrintTimes", None)
+            times = getter() if getter else {}
+            out = {}
+            for feature, duration in (times or {}).items():
+                try:
+                    seconds = int(duration) if duration is not None and getattr(duration, "valid", True) else 0
+                except Exception:
+                    seconds = 0
+                if seconds > 0:
+                    out[feature] = seconds
+            return out
+        times = run_on_main(read)
+        total = float(sum(times.values()))
+        if not total:
+            return None
+        rows = sorted(times.items(), key=lambda kv: -kv[1])
+        return [{"part": self.FEATURE_LABELS.get(k, k), "time": self._fmt_duration(v), "share_pct": round(100 * v / total)}
+                for k, v in rows]
+
     def _slice(self, batch_count=None):
         """Guards applied in code right before slicing, so a careless agent cannot produce a days-long print."""
         if batch_count:
@@ -370,6 +432,15 @@ class ToolRegistry:
             pass  # the guards are optional: slice anyway
         result = self._api.slice()
         if isinstance(result, dict):
+            try:
+                breakdown = self._time_breakdown()
+                if breakdown:
+                    result["time_breakdown"] = breakdown
+                    result["time_breakdown_note"] = ("На что уходит время печати одного запуска (оценка слайсера). Если время "
+                                                     "большое — снижай самую большую статью, если это допускает ТЗ, и покажи "
+                                                     "пользователю 2–3 главные статьи в итоге.")
+            except Exception:
+                pass
             try:
                 batch = self._batch_summary(result, self._batch_count)
                 if batch:
