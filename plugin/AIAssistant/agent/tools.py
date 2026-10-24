@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tool registry shared by the MCP server (tools/list, tools/call) and the LLM agent."""
+import math
 import os
 import re
 from collections import OrderedDict
@@ -28,6 +29,7 @@ class ToolRegistry:
         self._bus = bus
         self._last_selection = {}  # requirements / part type of the last recommend_materials call
         self._current_material = None  # material of the main extruder set through the agent
+        self._batch_count = None       # parts requested in the spec (from duplicate_model or slice)
         self._tools = OrderedDict()
         self._register_all()
 
@@ -145,9 +147,10 @@ class ToolRegistry:
                  _obj({"mode": {"type": "string", "enum": ["classic", "cylindrical_full", "cylindrical"]},
                        "base_diameter": {"type": "number", "description": "cylindrical_mode_base_diameter, мм"},
                        "non_printing_base_diameter": {"type": "number"},
-                       "round_segments": {"type": "integer"}}, ["mode"]),
-                 lambda mode, base_diameter=None, non_printing_base_diameter=None, round_segments=None:
-                 api.set_print_mode(mode, base_diameter, non_printing_base_diameter, round_segments), "mode")
+                       "round_segments": {"type": "integer"},
+                       "confirmed_by_user": {"type": "boolean", "description": "пользователь прямо попросил 5D для гибкой детали"}},
+                      ["mode"]),
+                 self._set_print_mode, "mode")
 
         # --- models
         self.add("load_model", "Загрузить файл модели (STL/OBJ/3MF) на стол по абсолютному пути; модель назначается на экструдер (по умолчанию 0 — основной).",
@@ -185,15 +188,16 @@ class ToolRegistry:
                        "max_per_run": {"type": "integer", "description": "не больше стольких деталей за запуск"},
                        "spacing_mm": {"type": "number", "description": "зазор между деталями, по умолчанию 10 мм (+ brim/raft)"}},
                       ["count"]),
-                 lambda count, object_id=None, max_per_run=None, spacing_mm=None:
-                 api.duplicate_for_batch(object_id, count, max_per_run, spacing_mm), "model")
+                 self._duplicate, "model")
         self.add("arrange_all", "Авторасстановка всех моделей на столе.", _obj(), lambda: api.arrange_all(), "model")
         self.add("delete_objects", "Удалить модель по object_id или все модели (object_id = all).",
                  _obj({"object_id": {"type": "string"}}), lambda object_id=None: api.delete_objects(object_id), "model")
 
         # --- slicing
-        self.add("slice", "Запустить слайсинг и дождаться результата: время печати, расход материала.",
-                 _obj(), self._slice, "slice")
+        self.add("slice", "Запустить слайсинг и дождаться результата: время печати, расход материала. Для партии передай "
+                 "batch_count — сколько деталей нужно всего; код сам посчитает число запусков и общее время партии.",
+                 _obj({"batch_count": {"type": "integer", "description": "сколько одинаковых деталей нужно всего (из ТЗ)"}}),
+                 self._slice, "slice")
         self.add("slice_status", "Состояние и прогресс слайсинга.", _obj(), lambda: api.slice_status(), "slice")
         self.add("export_gcode", "Сохранить G-code после слайсинга. Без path — в папку результатов по имени модели (result.gcode).",
                  _obj({"path": {"type": "string"}}), self._export_gcode, "slice")
@@ -249,8 +253,60 @@ class ToolRegistry:
         entry = data.get(key) if isinstance(data, dict) else None
         return entry.get("value") if isinstance(entry, dict) else entry
 
-    def _slice(self):
+    def _is_flexible_job(self):
+        reqs = (self._last_selection or {}).get("requirements") or {}
+        if reqs.get("flexible") is True:
+            return True
+        material = knowledge.MATERIALS.get(self._current_material or "", {})
+        return bool(material.get("flexible"))
+
+    def _set_print_mode(self, mode, base_diameter=None, non_printing_base_diameter=None, round_segments=None,
+                        confirmed_by_user=False):
+        # Elastic parts (seals, boots, bellows) are printed in 3D: a soft part does not hold its shape on the rotating
+        # cylindrical base, and bellows have a varying inner diameter that cannot sit on the base at all.
+        if mode != "classic" and self._is_flexible_job() and not confirmed_by_user:
+            raise ToolError("Режим НЕ изменён: деталь гибкая/эластичная (по ТЗ или по материалу) — такие детали печатаются в 3D "
+                            "(classic): мягкая деталь не держит форму на вращающемся цилиндрическом основании, а у гофр и "
+                            "пыльников внутренний диаметр меняется и деталь не садится на основание. Выбери classic. 5D — "
+                            "только если пользователь прямо попросил: тогда confirmed_by_user=true.")
+        return self._api.set_print_mode(mode, base_diameter, non_printing_base_diameter, round_segments)
+
+    def _duplicate(self, count, object_id=None, max_per_run=None, spacing_mm=None):
+        self._batch_count = int(count)
+        return self._api.duplicate_for_batch(object_id, count, max_per_run, spacing_mm)
+
+    @staticmethod
+    def _fmt_duration(seconds):
+        seconds = int(round(seconds))
+        days, rest = divmod(seconds, 86400)
+        hours, rest = divmod(rest, 3600)
+        text = "%d ч %02d мин" % (hours, rest // 60)
+        return ("%d сут " % days + text) if days else text
+
+    def _batch_summary(self, result, requested):
+        """Batch arithmetic done in code: the LLM got it wrong (15 runs x 57 h reported as 57 h)."""
+        seconds = result.get("print_time_seconds")
+        if not seconds or not requested or requested < 2:
+            return None
+        on_plate = max(1, run_on_main(lambda: len(self._api._nodes())))
+        runs = int(math.ceil(requested / float(on_plate)))
+        last = requested - on_plate * (runs - 1)
+        per_part = seconds / float(on_plate)
+        total = seconds * (runs - 1) + per_part * last
+        return {
+            "parts_total": requested, "parts_per_run": on_plate, "runs": runs, "parts_in_last_run": last,
+            "time_per_run": self._fmt_duration(seconds), "time_per_part": self._fmt_duration(per_part),
+            "total_time_one_printer": self._fmt_duration(total),
+            "note": ("Цифры партии посчитаны кодом — приведи их как есть, НЕ пересчитывай. Общее время ≈ число деталей × "
+                     "время одной детали и почти не зависит от того, по сколько деталей ставить за запуск: меньше деталей "
+                     "за запуск не ускоряет партию, а только снижает потери при сбое. Если общее время большое — так и "
+                     "скажи и укажи, что на k принтерах параллельно оно делится на k."),
+        }
+
+    def _slice(self, batch_count=None):
         """Guards applied in code right before slicing, so a careless agent cannot produce a days-long print."""
+        if batch_count:
+            self._batch_count = int(batch_count)
         notes = []
         try:
             if self._setting("adaptive_layer_height_enabled") in (True, "True", "true"):
@@ -275,6 +331,13 @@ class ToolRegistry:
         except Exception:
             pass  # the guards are optional: slice anyway
         result = self._api.slice()
+        if isinstance(result, dict):
+            try:
+                batch = self._batch_summary(result, self._batch_count)
+                if batch:
+                    result["batch"] = batch
+            except Exception:
+                pass
         if notes and isinstance(result, dict):
             result["auto_adjustments"] = notes
             result["note"] = "Перед нарезкой автоматически скорректировано: " + "; ".join(notes) + ". Упомяни это в итоге."
