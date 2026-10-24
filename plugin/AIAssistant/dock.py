@@ -138,6 +138,7 @@ class DockedChatWindow:
         self._timer = None
         self._wait_ticks = 0
         self._pids = set()          # Edge processes we started
+        self._procs = []            # their Popen objects, see _launch
 
     def available(self):
         return self._edge is not None
@@ -207,6 +208,9 @@ class DockedChatWindow:
         flags = 0x00000008 | 0x00000200 if sys.platform == "win32" else 0  # DETACHED_PROCESS | NEW_PROCESS_GROUP
         proc = subprocess.Popen(args, close_fds=True, creationflags=flags)
         self._pids.add(proc.pid)
+        # Keep the Popen alive: a dropped running Popen lands in subprocess._active (Python 3.5), and the
+        # backend's next engine start polls its stale handle there and crashes the slicer (WinError 6).
+        self._procs.append(proc)
         Logger.log("i", "AIAssistant: opened chat in Edge app mode")
 
     def _ensure_timer(self):

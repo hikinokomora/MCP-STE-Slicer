@@ -760,6 +760,13 @@ class SlicerAPI:
         if not self._nodes():
             raise ToolError("Нечего слайсить: на столе нет моделей.")
         backend = self._app.getBackend()
+        # CylindricalBackend borrows CuraEngineBackend's engine for 5D slices. While 5D is active
+        # CuraEngineBackend ignores that engine's exit, keeps the dead process and on the next 3D
+        # slice sends the job into a closed socket and waits forever. Drop it so slice() restarts it.
+        process = getattr(backend, "_process", None)
+        if backend.getPluginId() == "CuraEngineBackend" and process is not None and process.poll() is not None:
+            Logger.log("d", "AIAssistant: engine of %s exited (%s), restarting it", backend.getPluginId(), process.returncode)
+            backend._process = None
         Logger.log("d", "AIAssistant: forceSlice on %s, busy=%s", backend.getPluginId(), self._backend_busy())
         self._slice_done.clear()
         self._slice_cancel.clear()
