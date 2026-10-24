@@ -38,8 +38,9 @@ MATERIALS = OrderedDict([
     ("enduse_pp", {
         "name": "Enduse PP", "base": "PP", "density": 0.9, "tg_c": -10, "hdt_c": 90,
         "tensile_modulus_mpa": 1300, "tensile_strength_mpa": 30, "elongation_pct": 150, "water_absorption_pct": 0.01,
-        "uv": 1, "oils_fuels": 1, "alkali": 3, "acids": 3, "alcohol_ipa": 3, "abrasion": 2, "flexible": True,
-        "food_contact": True, "esd": False, "low_friction": True, "notes": "Химстойкий, усталостно-стойкий (живые шарниры), низкая жёсткость."}),
+        "uv": 1, "oils_fuels": 1, "alkali": 3, "acids": 3, "alcohol_ipa": 3, "abrasion": 2, "flexible": False,
+        "food_contact": True, "esd": False, "low_friction": True,
+        "notes": "Химстойкий, усталостно-стойкий (живые шарниры), пластичный, но не эластомер; низкая жёсткость."}),
     ("enduse_sbs", {
         "name": "Enduse SBS", "base": "SBS", "density": 1.01, "tg_c": 75, "hdt_c": 70,
         "tensile_modulus_mpa": 1500, "tensile_strength_mpa": 26, "elongation_pct": 30, "water_absorption_pct": 0.1,
@@ -48,9 +49,10 @@ MATERIALS = OrderedDict([
     ("enduse_tpu_d70", {
         "name": "Enduse TPU D70", "base": "TPU (Shore 70D)", "density": 1.23, "tg_c": -30, "hdt_c": 80,
         "tensile_modulus_mpa": 600, "tensile_strength_mpa": 45, "elongation_pct": 300, "water_absorption_pct": 0.3,
-        "uv": 2, "oils_fuels": 3, "alkali": 2, "acids": 2, "alcohol_ipa": 1, "abrasion": 3, "flexible": True,
+        "uv": 2, "oils_fuels": 3, "alkali": 2, "acids": 2, "alcohol_ipa": 1, "abrasion": 3, "flexible": False,
         "food_contact": False, "esd": False, "high_friction": True,
-        "notes": "Полужёсткий полиуретан: уплотнения подвижных соединений, ролики, износостойкие покрытия; маслобензостойкий."}),
+        "notes": "Полужёсткий полиуретан (Shore 70D, не резина): ролики, манжеты подвижных соединений, износостойкие "
+                 "накладки; маслобензостойкий. Для пыльников и сильфонов слишком жёсткий."}),
     ("fiberpart_abs_g4", {
         "name": "Fiberpart ABS G4", "base": "ABS + 4% стекловолокна", "density": 1.1, "tg_c": 105, "hdt_c": 98,
         "tensile_modulus_mpa": 2600, "tensile_strength_mpa": 42, "elongation_pct": 5, "water_absorption_pct": 0.3,
@@ -89,9 +91,10 @@ MATERIALS = OrderedDict([
     ("fiberpart_tpu_c5", {
         "name": "Fiberpart TPU C5", "base": "TPU + углеволокно", "density": 1.16, "tg_c": -30, "hdt_c": 90,
         "tensile_modulus_mpa": 900, "tensile_strength_mpa": 45, "elongation_pct": 150, "water_absorption_pct": 0.3,
-        "uv": 2, "oils_fuels": 3, "alkali": 2, "acids": 2, "alcohol_ipa": 2, "abrasion": 3, "flexible": True,
-        "food_contact": False, "esd": True, "high_friction": True,
-        "notes": "Износостойкий полиуретан с углеволокном (рассеивает статику); шестерни, ролики, нагруженные детали."}),
+        "uv": 2, "oils_fuels": 3, "alkali": 2, "acids": 2, "alcohol_ipa": 2, "abrasion": 3, "flexible": False,
+        "food_contact": False, "esd": False, "high_friction": True,
+        "notes": "Полужёсткий износостойкий полиуретан с углеволокном; шестерни, ролики, нагруженные детали. "
+                 "Антистатические свойства производителем не заявлены."}),
     ("fiberpart_tpu_g30", {
         "name": "Fiberpart TPU G30", "base": "твёрдый TPU + 30% стекловолокна", "density": 1.45, "tg_c": -20, "hdt_c": 120,
         "tensile_modulus_mpa": 2500, "tensile_strength_mpa": 55, "elongation_pct": 20, "water_absorption_pct": 0.3,
@@ -131,75 +134,143 @@ MATERIALS = OrderedDict([
         "food_contact": False, "esd": False, "notes": "Резиноподобный: кнопки, уплотнители, амортизаторы; не маслостойкий."}),
 ])
 
-RATING = {0: "плохо", 1: "ограниченно", 2: "хорошо", 3: "отлично"}
+# Stiffness class and maximum continuous service temperature (typical datasheet values).
+#   elastic    — elastomers (Shore A, modulus < ~100 MPa): boots, bellows, seals, gaskets;
+#   semi_rigid — hard TPU (Shore D, 100–1000 MPa): rollers, cuffs, gears that must not crack;
+#   rigid      — engineering plastics and composites.
+# For elastomers HDT is meaningless, so heat resistance is checked against service_temp_c.
+_EXTRA = {
+    "proto_pla": {"stiffness": "rigid", "service_temp_c": 50},
+    "enduse_petg": {"stiffness": "rigid", "service_temp_c": 65},
+    "enduse_abs": {"stiffness": "rigid", "service_temp_c": 85},
+    "enduse_pc": {"stiffness": "rigid", "service_temp_c": 115},
+    "enduse_pa6": {"stiffness": "rigid", "service_temp_c": 80},
+    "enduse_pp": {"stiffness": "rigid", "service_temp_c": 90},
+    "enduse_sbs": {"stiffness": "rigid", "service_temp_c": 65},
+    "enduse_tpu_d70": {"stiffness": "semi_rigid", "service_temp_c": 90, "hardness": "Shore 70D"},
+    "fiberpart_abs_g4": {"stiffness": "rigid", "service_temp_c": 90},
+    "fiberpart_abs_g13": {"stiffness": "rigid", "service_temp_c": 95},
+    "fiberpart_abspa_g8": {"stiffness": "rigid", "service_temp_c": 100},
+    "fiberpart_pa12_g12": {"stiffness": "rigid", "service_temp_c": 110},
+    "fiberpart_pc_g20": {"stiffness": "rigid", "service_temp_c": 120},
+    "fiberpart_pp_g30": {"stiffness": "rigid", "service_temp_c": 110},
+    "fiberpart_tpu_c5": {"stiffness": "semi_rigid", "service_temp_c": 90},
+    "fiberpart_tpu_g30": {"stiffness": "rigid", "service_temp_c": 100},
+    "sealant_tpu": {"stiffness": "elastic", "service_temp_c": 80, "high_friction": True},
+    "sealant_tpu_A95": {"stiffness": "elastic", "service_temp_c": 80, "hardness": "Shore 95A", "high_friction": True},
+    "sealant_tpu93": {"stiffness": "elastic", "service_temp_c": 80, "hardness": "Shore 93A", "high_friction": True},
+    "sealant_tpv80": {"stiffness": "elastic", "service_temp_c": 120, "hardness": "Shore 80A", "high_friction": True},
+    "sealant_tpe": {"stiffness": "elastic", "service_temp_c": 70},
+    "sealant_sebs": {"stiffness": "elastic", "service_temp_c": 70},
+}
+for _mid, _extra in _EXTRA.items():
+    MATERIALS[_mid].update(_extra)
+    # "flexible" means a true elastomer; ductile plastics (PP) and hard TPU are not flexible
+    MATERIALS[_mid]["flexible"] = _extra["stiffness"] == "elastic"
+assert set(_EXTRA) == set(MATERIALS), "every material needs a stiffness class and service temperature"
+
+# Stereotech materials of the slicer that are deliberately NOT in the knowledge base.
+EXCLUDED_MATERIALS = {
+    "contifiber_cpa": "непрерывное углеволокно — только армирование вторым экструдером в 5D, не основной материал",
+    "metalcast_316l": "металлонаполненный филамент — нужна отгонка связующего и спекание, не для прямой печати детали",
+    "metalcast_al99": "керамика — нужна отгонка связующего и спекание, не для прямой печати детали",
+    "proto_pva": "водорастворимый материал поддержек",
+}
+
+RATING_KEYS = ("uv", "oils_fuels", "alkali", "acids", "alcohol_ipa", "abrasion")
 
 REQUIREMENT_FIELDS = {
-    "min_glass_or_service_temp_c": "max(tg_c, hdt_c) >= value",
-    "min_hdt_c": "hdt_c >= value",
+    "min_glass_or_service_temp_c": "max(tg_c, hdt_c, service_temp_c) >= value",
+    "min_service_temp_c": "service_temp_c >= value (длительная рабочая температура)",
+    "min_hdt_c": "max(hdt_c, vicat_c) >= value (только для жёстких материалов)",
     "max_density": "density <= value",
     "max_water_absorption_pct": "water_absorption_pct <= value",
     "min_tensile_modulus_mpa": "tensile_modulus_mpa >= value",
+    "max_tensile_modulus_mpa": "tensile_modulus_mpa <= value",
     "min_tensile_strength_mpa": "tensile_strength_mpa >= value",
     "min_elongation_pct": "elongation_pct >= value",
     "uv": "rating >= value (0..3)", "oils_fuels": "rating", "alkali": "rating", "acids": "rating",
     "alcohol_ipa": "rating", "abrasion": "rating",
-    "flexible": "true/false", "food_contact": "true", "esd": "true",
+    "elastic": "true — только эластомеры (пыльники, сильфоны, уплотнения); false — не эластомеры",
+    "flexible": "синоним elastic",
+    "stiffness": "elastic / semi_rigid / rigid",
+    "food_contact": "true", "esd": "true", "low_friction": "true", "high_friction": "true",
 }
 
 
 def score_materials(requirements, available_ids=None):
     """Filter/rank materials against numeric and rating requirements.
 
-    Returns a list sorted by (number of failed requirements, -score)."""
-    results = []
+    Returns a list sorted by: number of failed requirements, then rating margin over the requirements,
+    then (for elastic parts) the softer material first, then the material id — so equal candidates
+    always come out in the same order."""
+    requirements = dict(requirements or {})
+    if "flexible" in requirements and "elastic" not in requirements:
+        requirements["elastic"] = requirements.pop("flexible")
+    want_elastic = bool(requirements.get("elastic")) or requirements.get("stiffness") == "elastic"
+    results, unknown = [], []
+    for key in requirements:
+        if key not in REQUIREMENT_FIELDS:
+            unknown.append(key)
     for mid, m in MATERIALS.items():
         if available_ids is not None and mid not in available_ids:
             continue
         failed, passed = [], []
-        for key, want in (requirements or {}).items():
-            if want is None:
+        deficit = 0.0  # how badly the failed requirements are missed, 0..1 per requirement
+        for key, want in requirements.items():
+            if want is None or key in unknown:
                 continue
             ok = True
+            have = None
             if key == "min_glass_or_service_temp_c":
-                ok = max(m.get("tg_c", 0), m.get("hdt_c", 0)) >= want
+                have = max(m.get("tg_c", 0), m.get("hdt_c", 0), m.get("service_temp_c", 0))
+            elif key == "min_service_temp_c":
+                have = m["service_temp_c"]
             elif key == "min_hdt_c":
-                ok = max(m.get("hdt_c", 0), m.get("vicat_c", 0)) >= want
-            elif key == "max_density":
-                ok = m["density"] <= want
-            elif key == "max_water_absorption_pct":
-                ok = m["water_absorption_pct"] <= want
-            elif key == "min_tensile_modulus_mpa":
-                ok = m["tensile_modulus_mpa"] >= want
-            elif key == "min_tensile_strength_mpa":
-                ok = m["tensile_strength_mpa"] >= want
-            elif key == "min_elongation_pct":
-                ok = m["elongation_pct"] >= want
-            elif key in ("uv", "oils_fuels", "alkali", "acids", "alcohol_ipa", "abrasion"):
+                # HDT is not defined for elastomers: compare their service temperature instead
+                have = m["service_temp_c"] if m["stiffness"] == "elastic" else max(m.get("hdt_c", 0), m.get("vicat_c", 0))
+            elif key in ("min_tensile_modulus_mpa", "min_tensile_strength_mpa", "min_elongation_pct"):
+                have = m[key[4:]]
+            elif key in ("max_density", "max_water_absorption_pct", "max_tensile_modulus_mpa"):
+                have = m[key[4:]]
+            if have is not None:
+                if key.startswith("max_"):
+                    ok = have <= want
+                    miss = (have - want) / float(want) if want else 1.0
+                else:
+                    ok = have >= want
+                    miss = (want - have) / float(abs(want)) if want else 1.0
+            elif key in RATING_KEYS:
                 ok = m.get(key, 0) >= int(want)
-            elif key in ("flexible", "food_contact", "esd", "low_friction", "high_friction"):
+                miss = (int(want) - m.get(key, 0)) / 3.0
+            elif key == "elastic":
+                ok = (m["stiffness"] == "elastic") == bool(want)
+                miss = 1.0
+            elif key == "stiffness":
+                ok = m["stiffness"] == want
+                miss = 0.5 if "semi_rigid" in (want, m["stiffness"]) else 1.0
+            elif key in ("food_contact", "esd", "low_friction", "high_friction"):
                 ok = bool(m.get(key, False)) == bool(want)
+                miss = 1.0
             else:
                 continue
             (passed if ok else failed).append(key)
-        score = sum(m.get(k, 0) for k in ("uv", "oils_fuels", "alkali", "abrasion") if k in (requirements or {}))
-        props = {k: m[k] for k in ("tg_c", "hdt_c", "density", "water_absorption_pct", "tensile_modulus_mpa",
-                                   "tensile_strength_mpa", "elongation_pct", "uv", "oils_fuels", "alkali", "acids",
-                                   "alcohol_ipa", "abrasion", "flexible") if k in m}
+            if not ok:
+                deficit += min(1.0, max(0.0, miss))
+        # how far above the required ratings the material is (ties are broken by real margin, not dict order)
+        margin = sum(m.get(k, 0) - int(requirements[k]) for k in RATING_KEYS
+                     if requirements.get(k) is not None and k not in unknown)
+        props = {k: m[k] for k in ("stiffness", "hardness", "service_temp_c", "tg_c", "hdt_c", "density",
+                                   "water_absorption_pct", "tensile_modulus_mpa", "tensile_strength_mpa",
+                                   "elongation_pct") + RATING_KEYS if k in m}
         results.append({"id": mid, "name": m["name"], "base": m["base"], "failed": failed, "passed": passed,
-                        "score": score, "properties": props, "notes": m["notes"]})
-    results.sort(key=lambda r: (len(r["failed"]), -r["score"]))
+                        "deficit": round(deficit, 2), "score": margin, "properties": props, "notes": m["notes"]})
+    results.sort(key=lambda r: (len(r["failed"]), r["deficit"], -r["score"],
+                                MATERIALS[r["id"]]["tensile_modulus_mpa"] if want_elastic else 0, r["id"]))
+    if unknown:
+        for r in results:
+            r["ignored_requirements"] = unknown
     return results
-
-
-def material_card(mid):
-    m = MATERIALS.get(mid)
-    if not m:
-        return None
-    card = dict(m)
-    card["id"] = mid
-    for key in ("uv", "oils_fuels", "alkali", "acids", "alcohol_ipa", "abrasion"):
-        card[key] = "%s (%s)" % (m.get(key), RATING.get(m.get(key)))
-    return card
 
 
 PRINT_RULES = u"""
@@ -218,7 +289,8 @@ PRINT_RULES = u"""
   и для деталей, где важна непрерывная намотка без шва между слоями.
 - ВЫБОР МЕЖДУ 5D И 5D SPIRAL: для каждой 5D-детали рассмотри оба варианта. Массивные нагруженные тела вращения
   (колёса, рабочие колёса, валы, кулачки) — по умолчанию cylindrical_full. Тонкостенные оболочки — cylindrical.
-  Если однозначно решить нельзя — выбери по толщине стенки (analyze_model) и в итоге одной фразой объясни,
+  Опирайся на analyze_model: spiral_candidate=true (сплошное кольцо, стенка ≤ 25 % радиуса) — cylindrical;
+  иначе (лопасти, рёбра, гофры, толстая стенка) — cylindrical_full. В итоге одной фразой объясни,
   почему не выбран другой. НЕ нарезай в двух режимах ради сравнения: 5D-нарезка занимает несколько минут.
 - Если пользователь явно указал режим — используй его. Если в имени файла/папки есть «3D» или «5D» — это подсказка.
 
@@ -235,6 +307,8 @@ PRINT_RULES = u"""
 НАСТРОЙКИ ПОД ТРЕБОВАНИЯ (значения — отправная точка, проверяй min/max через get_settings):
 - Нагруженные детали (крутящий момент, удары): wall_line_count 4–6, top_layers/bottom_layers 5–8,
   infill_sparse_density 40–100 % (зубья/шпоночный паз — 100 %), layer_height 0.15–0.2.
+- Термостойкость сравнивай по hdt_c (температура изгиба под нагрузкой). У частично-кристаллических PA и PP
+  tg_c ниже рабочей температуры — это нормально и не повод отбрасывать материал.
 - Точность посадок и профилей (±0.1–0.15 мм): layer_height 0.1–0.15, медленная внешняя стенка (speed_wall_0 20–30),
   xy_offset для компенсации усадки отверстий при необходимости.
 - Внешний вид без видимых слоёв: layer_height 0.1 (или 5D), ironing_enabled для верхних граней,
@@ -258,7 +332,9 @@ SYSTEM_PROMPT = u"""Ты — инженер-технолог аддитивно�
 
 ПОРЯДОК РАБОТЫ:
 1. get_scene_info — что на столе и какой принтер.
-   - Если в сообщении есть строка «Приложена 3D-модель … путь для load_model: …» — load_model с этим ПОЛНЫМ путём.
+   - Если в сообщении есть строка «Приложена 3D-модель … путь для load_model: …» — это новая задача:
+     на столе остались другие модели — delete_objects(object_id=all); в changed_settings остались правки
+     от прошлой детали — reset_settings. Затем load_model с этим ПОЛНЫМ путём.
    - Если модели в сообщении нет, но на столе есть объект — работай с ним (object_id), повторно НЕ загружай.
    - Если нет ни приложенной модели, ни объекта на столе — попроси приложить STL/OBJ/3MF. Фото, чертёж
      или скан ТЗ — это не модель; из них бери только требования. Имена файлов не придумывай.
@@ -268,6 +344,14 @@ SYSTEM_PROMPT = u"""Ты — инженер-технолог аддитивно�
    из базы знаний (их возвращает recommend_materials; в list_materials у них in_knowledge_base=true).
    Профили generic_* не выбирай и не запрашивай: для них нет проверенных свойств.
    Если идеального нет — выбери ближайший и честно скажи, какое требование не закрыто.
+   - Деталь работает на изгиб/растяжение с большой деформацией (пыльник, сильфон, гофра, мембрана, уплотнение,
+     прокладка, «должен сохранять эластичность») — передай elastic=true. Полужёсткие TPU (D70, C5) и жёсткие
+     материалы для таких деталей не подходят, даже если у них выше износостойкость.
+   - Жёсткая нагруженная деталь (зубья, лопасти, вал, кулачок, посадка с допуском) — stiffness="rigid".
+     Ролик или колесо с упругим протектором, манжета — stiffness="semi_rigid" (твёрдый TPU).
+   - Требования передавай только те, что прямо написаны в ТЗ. Удары камней или стружки — это ударная вязкость
+     и стойкость к разрыву (min_elongation_pct), а не абразивный износ: abrasion добавляй, только если в ТЗ
+     есть трение, истирание или абразивная среда.
 4. set_print_mode (classic / cylindrical_full / cylindrical), затем set_material, set_profile, set_settings.
    Второй экструдер (1) нужен только для поддержек/армирования; если он не используется —
    set_extruder_enabled(extruder=1, enabled=false).
@@ -281,7 +365,13 @@ SYSTEM_PROMPT = u"""Ты — инженер-технолог аддитивно�
    После таблицы — время печати, расход материала и пути к сохранённым файлам.
 
 ПРАВИЛА:
-- Не выдумывай значения свойств материалов и настроек — бери их из инструментов.
+- Принтер: проекты готовятся для Stereotech Hybrid 530 V5.2.4 (hte530v5.2.4). Если get_scene_info вернул
+  printer_warning — сразу скажи пользователю, какой принтер активен, и попроси выбрать Hybrid 530 V5.2.4
+  в слайсере. Не настраивай проект на другом принтере, пока пользователь явно не подтвердит его.
+- save_profile и create_profile вызывай только по просьбе пользователя: профиль качества должен оставаться
+  штатным, а изменения — в пользовательских настройках проекта.
+- Не выдумывай значения свойств материалов и настроек — бери их из инструментов. Элементы геометрии
+  (отверстия, пазы, лыски) называй только если их вернул analyze_model, они видны на фото или описаны в ТЗ.
 - Если инструмент вернул ошибку — объясни пользователю и предложи, что сделать.
 - Не меняй масштаб модели без явной просьбы.
 - Меняй только те настройки, для которых есть причина в ТЗ или геометрии. Не трогай то, что уже задано профилем
@@ -289,6 +379,12 @@ SYSTEM_PROMPT = u"""Ты — инженер-технолог аддитивно�
 - Инженерные требования ТЗ важнее пожеланий, не связанных с работой детали. Если пожелание пользователя
   противоречит ТЗ — выбери по ТЗ и коротко объясни почему.
 - Тон деловой: без шуток, сленга и эмодзи, даже если пользователь пишет неформально (переписку оценивает жюри).
+- compare_variants вызывай ТОЛЬКО если пользователь сам просит сравнить варианты («что быстрее?», «сравни
+  прочно/экономно»). Сам по своей инициативе не вызывай: это несколько лишних нарезок (в 5D — минуты).
+  После compare_variants G-code сброшен: перед save_project/export_gcode снова вызови slice. Без явного выбора
+  пользователя оставляй настройки по ТЗ.
+- Профили качества называй так, как их видит пользователь (name из list_profiles): quality_type normal — это
+  «Fine», fast — «Normal», high — «Extra Fine».
 - Не меняй настройки, которые при текущих значениях ни на что не влияют: при infill_sparse_density = 100 %
   не трогай infill_pattern и толщину крышек (деталь и так сплошная).
 - Опирайся только на требования, которые прямо есть в ТЗ, не додумывай новые (например, щёлочь, если в ТЗ кислоты и соли).

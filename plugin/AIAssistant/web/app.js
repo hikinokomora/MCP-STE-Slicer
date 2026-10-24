@@ -25,7 +25,7 @@ const TOOL_LABELS = {
   get_scene_info: ["", "Состояние слайсера"], list_profiles: ["", "Список профилей"],
   set_profile: ["", "Профиль качества"], create_profile: ["", "Новый профиль"],
   list_materials: ["", "Список материалов"], set_material: ["", "Материал"],
-  recommend_materials: ["", "Подбор материала по ТЗ"], material_properties: ["", "Свойства материала"],
+  recommend_materials: ["", "Подбор материала по ТЗ"],
   get_settings: ["", "Чтение настроек"], find_settings: ["", "Поиск настроек"],
   set_settings: ["", "Изменение настроек"], reset_settings: ["", "Сброс настроек"],
   set_print_mode: ["", "Режим печати 3D/5D"], load_model: ["", "Загрузка модели"],
@@ -35,6 +35,7 @@ const TOOL_LABELS = {
   slice: ["", "Слайсинг"], slice_status: ["", "Статус слайсинга"],
   export_gcode: ["", "Экспорт G-code"], save_project: ["", "Сохранение 3MF"],
   validate_gcode: ["", "Проверка G-code"], set_extruder_enabled: ["", "Экструдер вкл/выкл"],
+  save_profile: ["", "Сохранение профиля"], compare_variants: ["", "Сравнение вариантов"],
 };
 const MODE_LABELS = { classic: "3D", cylindrical: "5D Spiral", cylindrical_full: "5D" };
 
