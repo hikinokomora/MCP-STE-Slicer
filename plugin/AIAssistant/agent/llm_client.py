@@ -42,6 +42,13 @@ def _ssl_context():
     return context
 
 
+# Qwen 3 "thinks" before every step: up to 6000 hidden reasoning tokens per step (~90 s at this provider).
+# A budget keeps the reasoning but caps it. Providers that do not know the parameter answer HTTP 400:
+# then it is dropped for the rest of the session.
+THINKING_BUDGET = 1024
+_thinking_param_supported = True
+
+
 class LLMClient:
     def __init__(self, base_url, api_key, model, timeout=240):
         self.base_url = (base_url or "").rstrip("/")
@@ -53,6 +60,7 @@ class LLMClient:
         return bool(self.base_url and self.api_key and self.model)
 
     def chat(self, messages, tools=None, temperature=0.2):
+        global _thinking_param_supported
         if not self.is_configured():
             raise LLMError("LLM не настроена: укажите Base URL, API key и модель в настройках чата.")
         payload = {
@@ -63,6 +71,18 @@ class LLMClient:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+        if _thinking_param_supported and "qwen" in self.model.lower():
+            payload["thinking_budget"] = THINKING_BUDGET
+        try:
+            return self._post(payload)
+        except LLMError as e:
+            if "thinking_budget" in payload and str(e).startswith("LLM вернула HTTP 400"):
+                _thinking_param_supported = False  # the provider does not accept it: work without the budget
+                payload.pop("thinking_budget")
+                return self._post(payload)
+            raise
+
+    def _post(self, payload):
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
             self.base_url + "/chat/completions",
