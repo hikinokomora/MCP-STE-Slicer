@@ -57,8 +57,8 @@ PANEL_WIDTH = 520
 PANEL_MARGIN_RIGHT = 28
 PANEL_MARGIN_TOP = 72       # just below the slicer top bar
 PANEL_MARGIN_BOTTOM = 70    # above the slicer bottom bar
-PANEL_MIN_HEIGHT = 280
-PANEL_HEIGHT_SHARE = 0.42     # default height: 42% of the slicer window height
+PANEL_MIN_HEIGHT = 380
+PANEL_HEIGHT_SHARE = 0.49     # default height: ~half of the free height (30% more compact than 0.70)
 PANEL_SHIFT_TO_CENTER = 0.25  # share of the slicer width the panel is moved from the right edge toward the center
 SLICER_LEFT_PANEL = 520       # do not cover the slicer settings panel on the left
 
@@ -153,7 +153,6 @@ class DockedChatWindow:
             existing = self._chat if self._chat and _user32.IsWindow(self._chat) else _find_chat_hwnd(self._pids)
             if existing:
                 self._chat = existing
-                self._placed = False  # "Open chat" puts the window back to the default place and size
                 _user32.ShowWindow(existing, SW_RESTORE)
                 _user32.SetForegroundWindow(existing)
                 self._ensure_timer()
@@ -191,9 +190,7 @@ class DockedChatWindow:
         s = self._scale()
         width = int(PANEL_WIDTH * s)
         free = (bottom - top) - int((PANEL_MARGIN_TOP + PANEL_MARGIN_BOTTOM) * s)
-        # share of the whole slicer window; the minimum never exceeds the free area (high-DPI laptops)
-        height = max(int(PANEL_MIN_HEIGHT * s), int((bottom - top) * PANEL_HEIGHT_SHARE))
-        height = min(height, free)
+        height = max(int(PANEL_MIN_HEIGHT * s), int(free * PANEL_HEIGHT_SHARE))
         x = right - width - int(PANEL_MARGIN_RIGHT * s) - int((right - left) * PANEL_SHIFT_TO_CENTER)
         x = max(x, left + int(SLICER_LEFT_PANEL * s))
         # centred vertically inside the free area between the slicer top and bottom bars
@@ -264,8 +261,6 @@ class DockedChatWindow:
                 x, y, w, h = self._target_rect(slicer_rect)
                 _user32.SetWindowPos(self._chat, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE)
                 self._placed = True
-                Logger.log("i", "AIAssistant: chat window placed at %s,%s size %sx%s (slicer %s, scale %.2f)",
-                           x, y, w, h, slicer_rect, self._scale())
             elif self._last_slicer_rect and slicer_rect != self._last_slicer_rect:
                 # keep the user's own position/size of the panel, just follow the slicer's right edge
                 old = self._last_slicer_rect
