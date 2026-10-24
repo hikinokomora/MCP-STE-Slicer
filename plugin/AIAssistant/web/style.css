@@ -92,6 +92,12 @@ button:disabled { opacity: .5; cursor: default; }
 .save-actions .primary { background: var(--accent); color: var(--accent-ink); border: 1px solid var(--accent); }
 .save-actions .ghost { background: #fff; color: var(--text-soft); border: 1px solid var(--line); }
 .save-hint { font-size: 12px; color: var(--muted); }
+.save-hint.err { color: var(--err); }
+.corr-text { font-size: 13px; color: var(--text); }
+.corr-head { font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 8px 0 2px; }
+.corr-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+.corr-list li { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.corr-item { min-width: 0; }
 
 /* ------------------------------------------------------------ steps toggle */
 .toggle-row { display: flex; justify-content: center; margin: -6px 0 8px; }

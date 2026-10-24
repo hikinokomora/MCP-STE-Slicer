@@ -118,6 +118,14 @@
         <button value="cancel" class="ghost">Закрыть</button>
         <button id="btn-save" value="default" class="primary">Сохранить</button>
       </div>
+      <details class="mcp-info" id="corr-section">
+        <summary>Корректировки подбора</summary>
+        <p class="small muted">Свои — действуют только на этом компьютере. Общие — приняты для всех и загружаются из репозитория при запуске.</p>
+        <div class="corr-head">Свои</div>
+        <ul id="corr-local" class="corr-list"><li class="muted small">нет</li></ul>
+        <div class="corr-head">Общие</div>
+        <ul id="corr-global" class="corr-list"><li class="muted small">нет</li></ul>
+      </details>
       <details class="mcp-info">
         <summary>MCP-сервер</summary>
         <p class="small">JSON-RPC 2.0: <code id="mcp-url"></code> — методы <code>initialize</code>, <code>tools/list</code>, <code>tools/call</code>.</p>

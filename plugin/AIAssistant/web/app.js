@@ -35,7 +35,7 @@ const TOOL_LABELS = {
   slice: ["", "Слайсинг"], slice_status: ["", "Статус слайсинга"],
   export_gcode: ["", "Экспорт G-code"], save_project: ["", "Сохранение 3MF"],
   validate_gcode: ["", "Проверка G-code"], set_extruder_enabled: ["", "Экструдер вкл/выкл"],
-  duplicate_model: ["", "Размещение партии"],
+  duplicate_model: ["", "Размещение партии"], propose_correction: ["", "Корректировка подбора"],
 };
 const MODE_LABELS = { classic: "3D", cylindrical: "5D Spiral", cylindrical_full: "5D" };
 
@@ -203,6 +203,7 @@ function handleEvent(ev) {
     case "slice_result": renderSliceResult(ev); break;
     case "open_settings": if (firstBatchDone) openSettings(); break;
     case "save_offer": renderSaveOffer(); break;
+    case "correction_offer": if (firstBatchDone) renderCorrectionOffer(ev); break;
     case "save_offer_clear": els.messages.querySelectorAll(".save-offer").forEach((n) => n.remove()); break;
   }
 }
@@ -356,6 +357,72 @@ function renderSaveOffer() {
   scrollDown();
 }
 
+// ------------------------------------------------------------------ correction offer
+// The agent only proposes; the user decides whether to remember the correction and for whom.
+function renderCorrectionOffer(ev) {
+  const box = document.createElement("div");
+  box.className = "save-offer corr-offer";
+  box.innerHTML =
+    '<div class="save-q">Запомнить корректировку подбора?</div>' +
+    '<div class="corr-text">' + escapeHtml(ev.text || "") + "</div>" +
+    (ev.correction && ev.correction.comment ? '<div class="save-hint">«' + escapeHtml(ev.correction.comment) + "»</div>" : "") +
+    '<div class="save-actions">' +
+    '<button type="button" class="primary" data-scope="local">Только у меня</button>' +
+    '<button type="button" class="ghost" data-scope="global">Предложить для всех</button>' +
+    '<button type="button" class="ghost" data-scope="none">Не запоминать</button></div>';
+  box.querySelectorAll("button").forEach((btn) => btn.addEventListener("click", async () => {
+    const scope = btn.dataset.scope;
+    if (scope === "none") { box.innerHTML = '<div class="save-hint">Корректировка не сохранена.</div>'; return; }
+    box.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+    if (scope === "global") btn.textContent = "Проверка…";
+    try {
+      const r = await api("/api/corrections/save", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ correction: ev.correction, scope }) });
+      if (!r.ok) {
+        box.innerHTML = '<div class="save-hint err">Не сохранено: ' + escapeHtml((r.problems || []).join("; ")) + "</div>";
+        return;
+      }
+      if (r.issue_url) {
+        window.open(r.issue_url, "_blank");
+        box.innerHTML = '<div class="save-hint">Сохранено у вас и предложено для всех: откроется заявка на GitHub — отправьте её.</div>';
+      } else {
+        box.innerHTML = '<div class="save-hint">Сохранено на этом компьютере: ' + escapeHtml(r.text) + "</div>";
+      }
+    } catch (e) {
+      box.innerHTML = '<div class="save-hint err">Ошибка: ' + escapeHtml(e.message) + "</div>";
+    }
+  }));
+  els.messages.appendChild(box);
+  scrollDown();
+}
+
+async function loadCorrections() {
+  try {
+    const data = await api("/api/corrections");
+    const fill = (id, items, deletable) => {
+      const ul = $(id);
+      ul.innerHTML = items.length ? "" : '<li class="muted small">нет</li>';
+      items.forEach((c) => {
+        const li = document.createElement("li");
+        li.innerHTML = '<span class="corr-item">' + escapeHtml(c.text) +
+          (c.scope === "proposed" ? ' <span class="muted">(предложена для всех)</span>' : "") + "</span>";
+        if (deletable) {
+          const del = document.createElement("button");
+          del.type = "button"; del.className = "link-btn"; del.textContent = "удалить";
+          del.addEventListener("click", async () => {
+            await api("/api/corrections/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: c.id }) });
+            loadCorrections();
+          });
+          li.appendChild(del);
+        }
+        ul.appendChild(li);
+      });
+    };
+    fill("corr-local", data.local || [], true);
+    fill("corr-global", data.global || [], false);
+  } catch (e) { /* the list is optional */ }
+}
+
 // ------------------------------------------------------------------ send
 async function send(text, extra = {}) {
   if (busy) return;
@@ -396,6 +463,7 @@ async function openSettings() {
   els.keyHint.textContent = s.has_key ? "Ключ сохранён (" + s.key_hint + "). Оставьте поле пустым, чтобы не менять." : "Ключ не задан.";
   els.settingsMsg.textContent = "";
   $("mcp-url").textContent = location.origin + "/mcp";
+  loadCorrections();
   els.settings.showModal();
 }
 

@@ -4,7 +4,7 @@ import os
 import re
 from collections import OrderedDict
 
-from . import knowledge
+from . import corrections, knowledge
 from .slicer_api import ToolError
 
 
@@ -20,9 +20,12 @@ EXTRUDER = {"type": "integer", "description": "Номер экструдера (
 
 
 class ToolRegistry:
-    def __init__(self, api, output_dir_provider):
+    def __init__(self, api, output_dir_provider, corrections_store=None, bus=None):
         self._api = api
         self._output_dir = output_dir_provider
+        self._corrections = corrections_store
+        self._bus = bus
+        self._last_selection = {}  # requirements / part type of the last recommend_materials call
         self._tools = OrderedDict()
         self._register_all()
 
@@ -78,12 +81,6 @@ class ToolRegistry:
                  "Сохранить текущие изменённые настройки как новый пользовательский профиль и активировать его.",
                  _obj({"name": {"type": "string"}}, ["name"]),
                  lambda name: api.create_profile(name), "profile")
-        self.add("save_profile",
-                 "Сохранить текущие изменения настроек в активный пользовательский профиль (как «Обновить профиль "
-                 "текущими настройками»). Если активен встроенный профиль качества — укажи name: будет создан "
-                 "новый пользовательский профиль. Вызывай только по просьбе пользователя.",
-                 _obj({"name": {"type": "string", "description": "имя нового профиля, если пользовательский профиль не активен"}}),
-                 lambda name=None: api.save_profile(name), "profile")
         self.add("list_materials",
                  "Материалы, доступные для экструдера текущего принтера. in_knowledge_base=true — материал Stereotech "
                  "с проверенными свойствами (выбирай из них); generic_* — общие профили без данных о свойствах.",
@@ -99,19 +96,28 @@ class ToolRegistry:
                  lambda extruder, enabled: api.set_extruder_enabled(extruder, enabled), "material")
         self.add("recommend_materials",
                  "Подобрать материал по инженерным требованиям из ТЗ. Возвращает материалы слайсера, отсортированные по числу невыполненных требований, сразу с ключевыми свойствами "
-                 "(класс жёсткости, рабочая температура, Tg/HDT, плотность, механика, рейтинги стойкости 0..3). "
-                 "material_ids — показать свойства конкретных материалов (например, чтобы объяснить, почему материал не выбран). "
-                 "Ключи требований: elastic (bool: true — только эластомеры для пыльников/сильфонов/уплотнений, false — не эластомеры), "
-                 "min_service_temp_c (длительная рабочая температура), min_glass_or_service_temp_c, min_hdt_c (для жёстких; у эластомеров "
-                 "сравнивается рабочая температура), max_density, max_water_absorption_pct, min_tensile_modulus_mpa, max_tensile_modulus_mpa, "
-                 "min_tensile_strength_mpa, min_elongation_pct, uv/oils_fuels/alkali/acids/alcohol_ipa/abrasion (0..3), "
-                 "food_contact, esd, low_friction, high_friction (bool). Передавай только требования, прямо указанные в ТЗ.",
-                 _obj({"requirements": {"type": "object", "description": "Требования, например {\"elastic\": true, \"oils_fuels\": 3, \"min_service_temp_c\": 75} "
-                                                                          "или {\"min_hdt_c\": 130, \"max_density\": 1.2, \"alkali\": 3}"},
-                       "limit": {"type": "integer", "default": 6},
-                       "material_ids": {"type": "array", "items": {"type": "string"},
-                                        "description": "ограничить ответ этими материалами"}}),
+                 "(material_properties для них вызывать не нужно; рейтинги 0..3). "
+                 "Ключи требований: min_glass_or_service_temp_c, min_hdt_c, max_density, max_water_absorption_pct, min_tensile_modulus_mpa, "
+                 "min_tensile_strength_mpa, min_elongation_pct, uv/oils_fuels/alkali/acids/alcohol_ipa/abrasion (0..3), flexible, food_contact, esd, low_friction, high_friction (bool).",
+                 _obj({"requirements": {"type": "object", "description": "Требования, например {\"min_hdt_c\": 130, \"max_density\": 1.2, \"alkali\": 3}"},
+                       "part_type": {"type": "string", "enum": corrections.PART_TYPE_IDS,
+                                     "description": "функция детали: " + "; ".join("%s — %s" % p for p in corrections.PART_TYPES)},
+                       "limit": {"type": "integer", "default": 6}}, ["requirements"]),
                  self._recommend_materials, "material")
+        self.add("propose_correction",
+                 "Предложить пользователю запомнить корректировку подбора материала — ТОЛЬКО когда пользователь сам "
+                 "заменил выбранный материал и объяснил почему. Условие строится из типа детали и признаков последнего "
+                 "recommend_materials; проверяется по базе Stereotech и ТЗ. Сохранять или нет, решает пользователь кнопкой.",
+                 _obj({"prefer_material": {"type": "string", "description": "id материала, который выбрал пользователь"},
+                       "avoid_material": {"type": "string", "description": "id материала, который пользователь отверг"},
+                       "part_type": {"type": "string", "enum": corrections.PART_TYPE_IDS},
+                       "features": {"type": "array", "items": {"type": "string", "enum": corrections.FEATURE_IDS},
+                                    "description": "признаки условия (подмножество признаков текущего ТЗ); по умолчанию все"},
+                       "comment": {"type": "string", "description": "причина словами пользователя, коротко"}}),
+                 self._propose_correction, "material")
+        self.add("material_properties", "Инженерные свойства материала из базы знаний (Tg, HDT, плотность, водопоглощение, стойкость).",
+                 _obj({"material_id": {"type": "string"}}, ["material_id"]),
+                 self._material_properties, "material")
         self.add("get_settings",
                  "Прочитать настройки по ключам (значение, единицы, min/max, варианты). Настройки экструдера читаются с экструдера 0, если не указан другой.",
                  _obj({"keys": {"type": "array", "items": {"type": "string"}}, "extruder": EXTRUDER}, ["keys"]),
@@ -180,15 +186,6 @@ class ToolRegistry:
         # --- slicing
         self.add("slice", "Запустить слайсинг и дождаться результата: время печати, расход материала.",
                  _obj(), lambda: api.slice(), "slice")
-        self.add("compare_variants",
-                 "ТОЛЬКО по просьбе пользователя: нарезать 2–3 варианта настроек поверх текущих и сравнить время печати "
-                 "и расход материала (по умолчанию: прочно / быстро / экономно). После сравнения настройки возвращаются "
-                 "к исходным; apply=имя варианта оставляет этот вариант. G-code после сравнения сброшен — перед export_gcode "
-                 "снова вызови slice. В 5D каждый вариант режется заново — это может занять минуты.",
-                 _obj({"variants": {"type": "array", "description": "[{\"name\": \"прочно\", \"settings\": {\"infill_sparse_density\": 60}}, ...]",
-                                    "items": {"type": "object"}},
-                       "apply": {"type": "string", "description": "имя варианта, который оставить после сравнения"}}),
-                 lambda variants=None, apply=None: api.compare_variants(variants, apply), "slice")
         self.add("slice_status", "Состояние и прогресс слайсинга.", _obj(), lambda: api.slice_status(), "slice")
         self.add("export_gcode", "Сохранить G-code после слайсинга. Без path — в папку результатов по имени модели (result.gcode).",
                  _obj({"path": {"type": "string"}}), self._export_gcode, "slice")
@@ -199,37 +196,62 @@ class ToolRegistry:
                  _obj({"path": {"type": "string"}}), self._validate_gcode, "slice")
 
     # ------------------------------------------------------------------ handlers
-    def _recommend_materials(self, requirements=None, limit=6, material_ids=None):
+    def _recommend_materials(self, requirements, limit=6, part_type=None):
         available = None
         try:
             available = set(m["id"] for m in self._api.list_materials(0)["materials"])
         except Exception:
             pass
-        result = {"requirements": requirements or {},
+        ranked = knowledge.score_materials(requirements, available)
+        applied = []
+        if self._corrections is not None:
+            ranked, applied = corrections.apply(ranked, requirements, part_type, self._corrections.all())
+        self._last_selection = {"requirements": requirements, "part_type": part_type,
+                                "base_choice": knowledge.score_materials(requirements, available)[0]["id"] if ranked else None}
+        result = {"requirements": requirements, "part_type": part_type,
+                  "features": corrections.features_from_requirements(requirements),
+                  "candidates": ranked[:max(1, int(limit))],
                   "note": "Свойства — типичные справочные значения; температуры печати берутся из профиля материала слайсера."}
-        if material_ids:
-            wanted = set(material_ids)
-            available = wanted if available is None else available & wanted
-            not_in_base = {}
-            for mid in sorted(wanted - set(knowledge.MATERIALS)):
-                not_in_base[mid] = knowledge.EXCLUDED_MATERIALS.get(
-                    mid, "нет проверенных свойств: общий профиль, а не материал Stereotech")
-            if not_in_base:
-                result["not_in_knowledge_base"] = not_in_base
-            limit = max(int(limit), len(wanted))
-        result["candidates"] = knowledge.score_materials(requirements, available)[:max(1, int(limit))]
+        if applied:
+            result["applied_corrections"] = applied
+            result["note"] += (" Учтены корректировки пользователей (applied_corrections): они меняют порядок только среди "
+                               "материалов, которые выполняют ТЗ. Упомяни их одной строкой в итоге.")
         return result
+
+    def _propose_correction(self, prefer_material=None, avoid_material=None, part_type=None, features=None, comment=""):
+        if bool(prefer_material) == bool(avoid_material):
+            raise ToolError("Укажи ровно одно: prefer_material или avoid_material")
+        ctx = self._last_selection or {}
+        if not ctx.get("requirements"):
+            raise ToolError("Сначала вызови recommend_materials с требованиями ТЗ: корректировка строится от них")
+        current = corrections.features_from_requirements(ctx["requirements"])
+        chosen = current if features is None else [f for f in features if f in current]
+        corr = corrections.build(part_type or ctx.get("part_type"), chosen, prefer_material, avoid_material, comment,
+                                 ctx["requirements"])
+        problems = corrections.validate(corr)
+        if problems:
+            return {"ok": False, "problems": problems,
+                    "note": "Корректировка не прошла проверку и не будет предложена. Коротко объясни пользователю почему."}
+        if self._bus is not None:
+            self._bus.emit("correction_offer", correction=corr, text=corrections.describe(corr))
+        return {"ok": True, "offered": corrections.describe(corr),
+                "note": "Пользователю показана карточка «Запомнить?». Не спрашивай об этом текстом и не сохраняй сам."}
 
     def _list_materials(self, extruder=0):
         data = self._api.list_materials(extruder)
         for m in data.get("materials", []):
             m["in_knowledge_base"] = m.get("id") in knowledge.MATERIALS
-            if m.get("id") in knowledge.EXCLUDED_MATERIALS:
-                m["not_for_parts"] = knowledge.EXCLUDED_MATERIALS[m["id"]]
         data["materials"].sort(key=lambda m: (not m["in_knowledge_base"], m.get("id", "")))
         data["note"] = ("Выбирай материалы с in_knowledge_base=true (Stereotech): для них есть инженерные свойства. "
                         "generic_* — общие профили Ultimaker без проверенных свойств, их не выбирай.")
         return data
+
+    def _material_properties(self, material_id):
+        card = knowledge.material_card(material_id)
+        if card is None:
+            raise ToolError("Для материала %s нет проверенных свойств: это общий профиль, а не материал Stereotech. "
+                            "Выбери материал из recommend_materials (материалы Stereotech из базы знаний)." % material_id)
+        return card
 
     def _export_gcode(self, path=None):
         return self._api.export_gcode(path or self._default_path("gcode"))
