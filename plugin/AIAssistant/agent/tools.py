@@ -242,25 +242,42 @@ class ToolRegistry:
             return total
         return run_on_main(count)
 
+    MIN_ADAPTIVE_LAYER = 0.1   # adaptive layers must never go below this (0.1 ± 0.1 gave ~0.01 mm layers and weeks of printing)
+
+    def _setting(self, key):
+        data = self._api.get_settings([key])
+        entry = data.get(key) if isinstance(data, dict) else None
+        return entry.get("value") if isinstance(entry, dict) else entry
+
     def _slice(self):
-        note = None
+        """Guards applied in code right before slicing, so a careless agent cannot produce a days-long print."""
+        notes = []
         try:
+            if self._setting("adaptive_layer_height_enabled") in (True, "True", "true"):
+                layer = float(self._setting("layer_height") or 0.15)
+                variation = float(self._setting("adaptive_layer_height_variation") or 0)
+                if layer - variation < self.MIN_ADAPTIVE_LAYER - 1e-6:
+                    self._api.set_settings({"layer_height": 0.15, "adaptive_layer_height_variation": 0.05}, None)
+                    notes.append("адаптивные слои ограничены диапазоном 0.1–0.2 мм (было %.2f ± %.2f: слои тоньше 0.1 мм "
+                                 "не видны глазу, но многократно удлиняют печать и нарезку)" % (layer, variation))
             triangles = self._scene_triangles()
             if triangles > self.DENSE_MESH_TRIANGLES:
-                current = self._api.get_settings(["meshfix_maximum_resolution"])
-                value = current.get("meshfix_maximum_resolution") if isinstance(current, dict) else None
-                if isinstance(value, dict):
-                    value = value.get("value")
+                value = self._setting("meshfix_maximum_resolution")
                 if value is None or float(value) < self.DENSE_MESH_RESOLUTION:
                     self._api.set_settings({"meshfix_maximum_resolution": self.DENSE_MESH_RESOLUTION}, None)
-                    note = ("На столе %d тыс. треугольников: meshfix_maximum_resolution поднят до %.1f мм, чтобы нарезка "
-                            "не шла десятки минут. Модель не меняется, сопло 0.4 мм такие мелкие отрезки всё равно "
-                            "не воспроизводит. Упомяни это одной строкой в итоге." % (triangles // 1000, self.DENSE_MESH_RESOLUTION))
+                    notes.append("на столе %d тыс. треугольников: meshfix_maximum_resolution поднят до %.1f мм (модель не "
+                                 "меняется, сопло 0.4 мм такие отрезки не воспроизводит)" % (triangles // 1000, self.DENSE_MESH_RESOLUTION))
+                if self._setting("support_tree_enable") in (True, "True", "true"):
+                    self._api.set_settings({"support_tree_enable": False, "support_type": "buildplate",
+                                            "support_interface_enable": True}, None)
+                    notes.append("древовидные поддержки заменены обычными (только от стола, с плотным верхним слоем): "
+                                 "на такой плотной сетке древовидные считаются десятки минут")
         except Exception:
-            pass  # the speed-up is optional: slice anyway
+            pass  # the guards are optional: slice anyway
         result = self._api.slice()
-        if note and isinstance(result, dict):
-            result["note_dense_mesh"] = note
+        if notes and isinstance(result, dict):
+            result["auto_adjustments"] = notes
+            result["note"] = "Перед нарезкой автоматически скорректировано: " + "; ".join(notes) + ". Упомяни это в итоге."
         return result
 
     def _set_material(self, material_id, extruder=0, confirmed_by_user=False):
