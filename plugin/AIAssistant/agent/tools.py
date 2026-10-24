@@ -5,6 +5,7 @@ import re
 from collections import OrderedDict
 
 from . import corrections, knowledge
+from .main_thread import run_on_main
 from .slicer_api import ToolError
 
 
@@ -192,7 +193,7 @@ class ToolRegistry:
 
         # --- slicing
         self.add("slice", "Запустить слайсинг и дождаться результата: время печати, расход материала.",
-                 _obj(), lambda: api.slice(), "slice")
+                 _obj(), self._slice, "slice")
         self.add("slice_status", "Состояние и прогресс слайсинга.", _obj(), lambda: api.slice_status(), "slice")
         self.add("export_gcode", "Сохранить G-code после слайсинга. Без path — в папку результатов по имени модели (result.gcode).",
                  _obj({"path": {"type": "string"}}), self._export_gcode, "slice")
@@ -223,6 +224,43 @@ class ToolRegistry:
             result["applied_corrections"] = applied
             result["note"] += (" Учтены корректировки пользователей (applied_corrections): они меняют порядок только среди "
                                "материалов, которые выполняют ТЗ. Упомяни их одной строкой в итоге.")
+        return result
+
+    # Dense meshes (scans, sculpted figurines: 500k+ triangles) slice for many minutes because the engine keeps every
+    # segment longer than meshfix_maximum_resolution (0.01 mm by default). 0.1 mm does not change the model and is far
+    # below what a 0.4 mm nozzle can reproduce.
+    DENSE_MESH_TRIANGLES = 300000
+    DENSE_MESH_RESOLUTION = 0.1
+
+    def _scene_triangles(self):
+        def count():
+            total = 0
+            for node in self._api._nodes():
+                mesh = node.getMeshData()
+                if mesh is not None:
+                    total += mesh.getFaceCount() if mesh.hasIndices() else mesh.getVertexCount() // 3
+            return total
+        return run_on_main(count)
+
+    def _slice(self):
+        note = None
+        try:
+            triangles = self._scene_triangles()
+            if triangles > self.DENSE_MESH_TRIANGLES:
+                current = self._api.get_settings(["meshfix_maximum_resolution"])
+                value = current.get("meshfix_maximum_resolution") if isinstance(current, dict) else None
+                if isinstance(value, dict):
+                    value = value.get("value")
+                if value is None or float(value) < self.DENSE_MESH_RESOLUTION:
+                    self._api.set_settings({"meshfix_maximum_resolution": self.DENSE_MESH_RESOLUTION}, None)
+                    note = ("На столе %d тыс. треугольников: meshfix_maximum_resolution поднят до %.1f мм, чтобы нарезка "
+                            "не шла десятки минут. Модель не меняется, сопло 0.4 мм такие мелкие отрезки всё равно "
+                            "не воспроизводит. Упомяни это одной строкой в итоге." % (triangles // 1000, self.DENSE_MESH_RESOLUTION))
+        except Exception:
+            pass  # the speed-up is optional: slice anyway
+        result = self._api.slice()
+        if note and isinstance(result, dict):
+            result["note_dense_mesh"] = note
         return result
 
     def _set_material(self, material_id, extruder=0, confirmed_by_user=False):
