@@ -248,6 +248,9 @@ def _hints(r):
         rev = r["revolution_by_axis"][r["revolution_axis"]]
         hints.append("Вал вдоль оси %s: %.0f%% длины — круглые сечения, остальное — несимметричные элементы (кулачок, лопасти)." % (
             r["revolution_axis"], rev["round_fraction"] * 100))
+        if not r.get("has_axial_bore") and rev["aspect_length_to_diameter"] >= 0.5:
+            hints.append("Сплошной вал с кулачком/выступами — 5D (cylindrical_full): ядро диаметром основания печатается в 3D, "
+                         "остальное — цилиндрическими слоями, рабочий профиль без «ступенек». Несимметричный выступ — не повод для 3D.")
     if r.get("revolution_axis"):
         rev = r["revolution_by_axis"][r["revolution_axis"]]
         if r.get("spiral_candidate"):

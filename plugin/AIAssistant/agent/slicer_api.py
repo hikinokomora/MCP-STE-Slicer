@@ -142,11 +142,11 @@ class SlicerAPI:
 
     def _setting_stack(self, key, extruder):
         gs = self._global()
-        if extruder is not None:
-            return self._extruder(extruder)
-        if gs.getProperty(key, "settable_per_extruder"):
-            return self._extruder(0)
-        return gs
+        # Machine-wide settings (printing mode, 5D base and overlap...) are read from the global stack only:
+        # written to an extruder they are silently ignored, whatever extruder the caller named.
+        if not gs.getProperty(key, "settable_per_extruder"):
+            return gs
+        return self._extruder(0 if extruder is None else extruder)
 
     @staticmethod
     def _convert(value, setting_type, options):
