@@ -55,11 +55,11 @@ SWP_NOACTIVATE = 0x0010
 # Panel placement relative to the slicer window (physical pixels at 100% scale; scaled by DPI below)
 PANEL_WIDTH = 520
 PANEL_MARGIN_RIGHT = 28
-PANEL_MARGIN_TOP = 96       # below the slicer top bar
+PANEL_MARGIN_TOP = 72       # just below the slicer top bar
 PANEL_MARGIN_BOTTOM = 70    # above the slicer bottom bar
-PANEL_MIN_HEIGHT = 420
-PANEL_HEIGHT_SHARE = 0.75     # default height: 75% of the free height of the slicer viewport
-PANEL_SHIFT_TO_CENTER = 0.15  # share of the slicer width the panel is moved from the right edge toward the center
+PANEL_MIN_HEIGHT = 380
+PANEL_HEIGHT_SHARE = 0.49     # default height: ~half of the free height (30% more compact than 0.70)
+PANEL_SHIFT_TO_CENTER = 0.25  # share of the slicer width the panel is moved from the right edge toward the center
 SLICER_LEFT_PANEL = 520       # do not cover the slicer settings panel on the left
 
 
@@ -193,7 +193,8 @@ class DockedChatWindow:
         height = max(int(PANEL_MIN_HEIGHT * s), int(free * PANEL_HEIGHT_SHARE))
         x = right - width - int(PANEL_MARGIN_RIGHT * s) - int((right - left) * PANEL_SHIFT_TO_CENTER)
         x = max(x, left + int(SLICER_LEFT_PANEL * s))
-        y = top + int(PANEL_MARGIN_TOP * s)
+        # centred vertically inside the free area between the slicer top and bottom bars
+        y = top + int(PANEL_MARGIN_TOP * s) + max(0, (free - height) // 2)
         return x, y, width, height
 
     def _launch(self, url):
