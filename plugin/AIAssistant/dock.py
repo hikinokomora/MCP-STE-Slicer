@@ -57,7 +57,8 @@ PANEL_WIDTH = 520
 PANEL_MARGIN_RIGHT = 28
 PANEL_MARGIN_TOP = 96       # below the slicer top bar
 PANEL_MARGIN_BOTTOM = 70    # above the slicer bottom bar
-PANEL_MIN_HEIGHT = 520
+PANEL_MIN_HEIGHT = 420
+PANEL_HEIGHT_SHARE = 0.75     # default height: 75% of the free height of the slicer viewport
 PANEL_SHIFT_TO_CENTER = 0.15  # share of the slicer width the panel is moved from the right edge toward the center
 SLICER_LEFT_PANEL = 520       # do not cover the slicer settings panel on the left
 
@@ -138,7 +139,6 @@ class DockedChatWindow:
         self._timer = None
         self._wait_ticks = 0
         self._pids = set()          # Edge processes we started
-        self._procs = []            # their Popen objects, see _launch
 
     def available(self):
         return self._edge is not None
@@ -189,7 +189,8 @@ class DockedChatWindow:
         left, top, right, bottom = slicer_rect
         s = self._scale()
         width = int(PANEL_WIDTH * s)
-        height = max(int(PANEL_MIN_HEIGHT * s), (bottom - top) - int((PANEL_MARGIN_TOP + PANEL_MARGIN_BOTTOM) * s))
+        free = (bottom - top) - int((PANEL_MARGIN_TOP + PANEL_MARGIN_BOTTOM) * s)
+        height = max(int(PANEL_MIN_HEIGHT * s), int(free * PANEL_HEIGHT_SHARE))
         x = right - width - int(PANEL_MARGIN_RIGHT * s) - int((right - left) * PANEL_SHIFT_TO_CENTER)
         x = max(x, left + int(SLICER_LEFT_PANEL * s))
         y = top + int(PANEL_MARGIN_TOP * s)
@@ -205,12 +206,12 @@ class DockedChatWindow:
             s = self._scale() or 1.0  # Chromium takes DIPs here
             args += ["--window-position=%d,%d" % (int(x / s), int(y / s)),
                      "--window-size=%d,%d" % (int(w / s), int(h / s))]
-        flags = 0x00000008 | 0x00000200 if sys.platform == "win32" else 0  # DETACHED_PROCESS | NEW_PROCESS_GROUP
-        proc = subprocess.Popen(args, close_fds=True, creationflags=flags)
-        self._pids.add(proc.pid)
-        # Keep the Popen alive: a dropped running Popen lands in subprocess._active (Python 3.5), and the
-        # backend's next engine start polls its stale handle there and crashes the slicer (WinError 6).
-        self._procs.append(proc)
+        # Start Edge through ShellExecuteW, NOT subprocess: an unreferenced Popen on Python 3.5/Windows ends up in
+        # subprocess._active and the slicer later crashes with WinError 6 when it starts CuraEngine.
+        params = subprocess.list2cmdline(args[1:])
+        rc = ctypes.windll.shell32.ShellExecuteW(None, "open", self._edge, params, None, 1)
+        if rc <= 32:
+            raise OSError("ShellExecuteW failed with code %s" % rc)
         Logger.log("i", "AIAssistant: opened chat in Edge app mode")
 
     def _ensure_timer(self):
