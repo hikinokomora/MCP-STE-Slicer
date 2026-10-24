@@ -34,14 +34,11 @@ from steslicer.Settings.SetObjectExtruderOperation import SetObjectExtruderOpera
 from . import geometry
 from .main_thread import run_on_main
 
-# The hackathon reference projects are made for this printer (definition hte530v5.2.4).
 TARGET_PRINTER_NAME = "Stereotech Hybrid 530 V5.2.4"
 TARGET_PRINTER_DEFINITION = "hte530v5.2.4"
 
-# Global keys that define the print mode; switching a quality profile must not change them.
 MODE_KEYS = ("printing_mode", "cylindrical_mode_base_diameter", "non_printing_base_diameter", "cylindrical_round_segments")
 
-# Beyond warning_bound * factor (when the setting has no hard bound on that side) a value is rejected.
 WARNING_HARD_FACTOR = 1.5
 
 PRINT_MODES = {
@@ -64,7 +61,6 @@ class ToolError(Exception):
 
 
 def _printer_to_scene_vec(v):
-    # printer (x, y, z_up) -> scene (x, y_up, z)
     return Vector(float(v[0]), float(v[2]), -float(v[1]))
 
 
@@ -83,11 +79,10 @@ class SlicerAPI:
         self._slice_started_at = None
         self._slice_error = None
         self._slice_cancel = threading.Event()
-        self._needs_slice = False  # set by compare_variants: the current G-code is from a test variant
+        self._needs_slice = False
         self._hooked_backends = set()
-        self._uploads = {}  # lower-case file name -> full path, files the user attached in this session
+        self._uploads = {}
 
-    # ------------------------------------------------------------------ helpers
     def _global(self):
         stack = self._app.getGlobalContainerStack()
         if stack is None:
@@ -175,7 +170,6 @@ class SlicerAPI:
             return str(int(float(value)))
         return value if isinstance(value, str) else str(value)
 
-    # ------------------------------------------------------------------ scene
     def scene_info(self):
         return run_on_main(self._scene_info)
 
@@ -223,7 +217,6 @@ class SlicerAPI:
                    TARGET_PRINTER_DEFINITION, TARGET_PRINTER_NAME))
         return info
 
-    # ------------------------------------------------------------------ profiles
     def list_profiles(self):
         return run_on_main(self._list_profiles)
 
@@ -264,11 +257,8 @@ class SlicerAPI:
         mode_after = {key: gs.getProperty(key, "value") for key in MODE_KEYS}
         if mode_after != mode_before:
             if custom_profile:
-                # a custom profile may carry its own print mode: keep it, but say so
                 result["print_mode_changed"] = {"from": mode_before["printing_mode"], "to": mode_after["printing_mode"]}
             else:
-                # The print mode lives in the user/custom-profile layer; dropping a custom profile would silently
-                # fall back to the machine default (5D). A quality profile must not change the mode.
                 for key, value in mode_before.items():
                     if mode_after[key] != value:
                         gs.userChanges.setProperty(key, "value", value)
@@ -298,7 +288,7 @@ class SlicerAPI:
                         "оставлены в проекте как были." % unique_name)
 
     def _create_quality_changes(self, name):
-        unique_name = self._app.getContainerRegistry().uniqueName(name)  # the same name createQualityChanges picks
+        unique_name = self._app.getContainerRegistry().uniqueName(name)
         self._app.getQualityManager().createQualityChanges(name)
         return unique_name
 
@@ -337,11 +327,10 @@ class SlicerAPI:
         manager = ContainerManager.getInstance()
         if manager is None or not manager.updateQualityChanges():
             raise ToolError("Не удалось обновить профиль «%s»" % quality_changes.getName())
-        manager.clearUserContainers()  # the values now live in the profile, as after the menu action
+        manager.clearUserContainers()
         return {"mode": "updated", "profile": quality_changes.getName(), "merged_settings": changed,
                 "active_profile": mm.activeQualityOrQualityChangesName}
 
-    # ------------------------------------------------------------------ materials
     def list_materials(self, extruder=0):
         return run_on_main(self._list_materials, extruder)
 
@@ -392,13 +381,12 @@ class SlicerAPI:
         mm = self._app.getMachineManager()
         if not hasattr(mm, "setExtruderEnabled"):
             raise ToolError("Эта версия слайсера не умеет включать/выключать экструдер из плагина")
-        self._extruder(extruder)  # validates the index
+        self._extruder(extruder)
         mm.setExtruderEnabled(extruder, enabled)
         gs = self._global()
         return {"extruder": extruder, "enabled": enabled,
                 "extruders_enabled_count": gs.getProperty("extruders_enabled_count", "value")}
 
-    # ------------------------------------------------------------------ settings
     def get_settings(self, keys, extruder=None):
         return run_on_main(self._get_settings, keys, extruder)
 
@@ -474,8 +462,6 @@ class SlicerAPI:
                     continue
                 low_w = stack.getProperty(key, "minimum_value_warning")
                 high_w = stack.getProperty(key, "maximum_value_warning")
-                # Many settings (layer_height, line widths, speeds) have only a warning bound on one side.
-                # Far beyond it the value is nonsense (e.g. a 50 mm layer), so treat it as a hard limit there.
                 if high is None and high_w is not None and high_w > 0 and value > high_w * WARNING_HARD_FACTOR:
                     rejected[key] = ("значение %s намного больше рекомендуемого максимума %s (жёсткая граница %s)"
                                      % (value, high_w, round(high_w * WARNING_HARD_FACTOR, 4)))
@@ -510,7 +496,6 @@ class SlicerAPI:
                 stack.userChanges.removeInstance(key)
         return {"cleared": cleared}
 
-    # ------------------------------------------------------------------ print mode
     def set_print_mode(self, mode, base_diameter=None, non_printing_base_diameter=None, round_segments=None):
         return run_on_main(self._set_print_mode, mode, base_diameter, non_printing_base_diameter, round_segments)
 
@@ -539,7 +524,6 @@ class SlicerAPI:
             result["note"] = "В 5D ось вращения — вертикаль через центр стола (X=0, Y=0); тело вращения нужно ставить осью вертикально и центровать (orient_model с target=5d)."
         return result
 
-    # ------------------------------------------------------------------ models
     def remember_upload(self, name, path):
         """Called for every file the user attaches in the chat."""
         self._uploads[name.lower()] = path
@@ -552,8 +536,6 @@ class SlicerAPI:
     def load_model(self, path, extruder=0, timeout=120):
         path = (path or "").strip().strip('"')
         if not os.path.isfile(path):
-            # The LLM often passes just a file name. Resolve it ONLY against this session's attachments,
-            # never against old uploads on disk, and never load a second copy of a model already on the plate.
             name = os.path.basename(path.replace("\\", "/")).lower()
             on_plate = [n for n in run_on_main(self._nodes) if self._stem(n.getName()) == self._stem(name)]
             if on_plate:
@@ -573,12 +555,11 @@ class SlicerAPI:
             time.sleep(0.5)
             new = run_on_main(lambda: [n for n in self._nodes() if self._node_id(n) not in before])
             if new:
-                time.sleep(0.5)  # let platform physics drop the model onto the plate
+                time.sleep(0.5)
 
                 def finish():
                     nodes = [n for n in self._nodes() if self._node_id(n) not in before]
                     for node in nodes:
-                        # a new model takes the extruder selected in the UI; pin it to the requested one
                         self._assign_extruder(node, extruder)
                     return [self._node_info(n) for n in nodes]
                 return {"loaded": run_on_main(finish)}
@@ -644,14 +625,12 @@ class SlicerAPI:
             raise ToolError("Партия на одном столе возможна только в 3D. В 5D деталь печатается на цилиндрическом "
                             "основании — одна деталь за запуск; посчитай число запусков и общее время.")
         node = self._node(object_id)
-        # replace copies left from a previous call (same model name)
         old = [n for n in self._nodes() if n is not node and n.getName() == node.getName()]
         if old:
             op = GroupedOperation()
             for n in old:
                 op.addOperation(RemoveSceneNodeOperation(n))
             op.push()
-        # gap between parts: 10 mm plus the adhesion that surrounds every part
         spacing = float(spacing_mm) if spacing_mm else 10.0
         adhesion = gs.getProperty("adhesion_type", "value")
         try:
@@ -668,7 +647,7 @@ class SlicerAPI:
                                      margin=10.0, spacing=spacing, max_per_run=max_per_run)
         if not plan.get("max_per_plate"):
             raise ToolError("Деталь %.0f×%.0f мм не помещается на стол с отступами." % (bbox.width, bbox.depth))
-        if plan["rotated_90"]:  # turning around the vertical axis does not change print quality
+        if plan["rotated_90"]:
             RotateOperation(node, Quaternion.fromAngleAxis(math.pi / 2, Vector(0, 1, 0)),
                             rotate_around_point=bbox.center).push()
             bbox = node.getBoundingBox()
@@ -699,7 +678,6 @@ class SlicerAPI:
         time.sleep(1.0)
         return self.list_objects()
 
-    # ------------------------------------------------------------------ geometry
     def _mesh_triangles(self, object_id):
         node = self._node(object_id)
         md = node.getMeshData().getTransformed(node.getWorldTransformation())
@@ -745,7 +723,6 @@ class SlicerAPI:
             q = Quaternion.fromMatrix(Matrix(m.tolist()))
             RotateOperation(node, q, rotate_around_point=node.getBoundingBox().center).push()
         if axis_point_printer is not None:
-            # re-read the axis position from the rotated mesh and put it on the machine axis (X=0, Y=0)
             _, vertices, indices = self._mesh_triangles(object_id)
             tri = geometry.triangles_from_mesh(geometry.scene_to_printer(vertices), indices)
             rev = geometry.revolution_analysis(tri, geometry.AXES["Z"])
@@ -753,7 +730,6 @@ class SlicerAPI:
             TranslateOperation(node, _printer_to_scene_vec([-px, -py, 0])).push()
         self._drop_to_plate(node)
 
-    # ------------------------------------------------------------------ slicing
     def _hook_backends(self):
         manager = self._app.getBackendManager()
         for backend in list(manager.getBackends().values()):
@@ -822,9 +798,6 @@ class SlicerAPI:
         if not self._nodes():
             raise ToolError("Нечего слайсить: на столе нет моделей.")
         backend = self._app.getBackend()
-        # CylindricalBackend borrows CuraEngineBackend's engine for 5D slices. While 5D is active
-        # CuraEngineBackend ignores that engine's exit, keeps the dead process and on the next 3D
-        # slice sends the job into a closed socket and waits forever. Drop it so slice() restarts it.
         process = getattr(backend, "_process", None)
         if backend.getPluginId() == "CuraEngineBackend" and process is not None and process.poll() is not None:
             Logger.log("d", "AIAssistant: engine of %s exited (%s), restarting it", backend.getPluginId(), process.returncode)
@@ -853,7 +826,7 @@ class SlicerAPI:
                 self._slice_started_at = None
             if self._slice_error:
                 raise ToolError(self._slice_error)
-            time.sleep(0.5)  # print information arrives right after the Done state
+            time.sleep(0.5)
             result = self.slice_result()
             self._needs_slice = False
             result["backend"] = backend_id
@@ -893,7 +866,6 @@ class SlicerAPI:
             Logger.logException("w", "AIAssistant: stopSlicing failed")
         return True
 
-    # ------------------------------------------------------------------ variants
     VARIANT_PRESETS = [
         ("прочно", {"wall_line_count": 5, "top_layers": 6, "bottom_layers": 6, "infill_sparse_density": 60}),
         ("быстро", {"layer_height": 0.25, "wall_line_count": 2, "infill_sparse_density": 15}),
@@ -970,7 +942,6 @@ class SlicerAPI:
                     run_on_main(self._set_settings, values, None)
                     applied = str(apply)
         ok = [r for r in rows if "error" not in r]
-        # the G-code on the plate belongs to the last variant, not to the restored/applied settings
         self._needs_slice = True
         summary = {"variants": rows, "applied": applied, "needs_slice": True,
                    "note": ("Настройки возвращены к исходным. " if not applied else "Применён вариант «%s». " % applied)
@@ -999,8 +970,6 @@ class SlicerAPI:
         seconds = int(duration) if duration is not None and duration.valid else 0
         raw_lengths = list(info.materialLengths or [])
         raw_weights = list(info.materialWeights or [])
-        # PrintInformation fills these lists while iterating global_stack.extruders, a plain dict whose
-        # order is arbitrary in Python 3.5. Replay the same iteration to map entries to extruder positions.
         gs = self._global()
         amounts = getattr(info, "_material_amounts", None)
         positions = [p for p in gs.extruders if amounts is None or int(p) < len(amounts)]
@@ -1026,7 +995,6 @@ class SlicerAPI:
             "gcode_ready": has_gcode,
         }
 
-    # ------------------------------------------------------------------ export
     def export_gcode(self, path):
         if self._needs_slice:
             raise ToolError("После compare_variants G-code относится к тестовому варианту. Сначала вызови slice "
@@ -1034,8 +1002,6 @@ class SlicerAPI:
         directory = os.path.dirname(path)
         if directory:
             os.makedirs(directory, exist_ok=True)
-        # Like Cura's WriteFileJob, writers run off the main thread: GCodeWriter renders its
-        # preview through @call_on_qt_thread and would deadlock if called from main.
         writer = PluginRegistry.getInstance().getPluginObject("GCodeWriter")
         with open(path, "w", encoding="utf-8") as stream:
             ok = writer.write(stream, None, MeshWriter.OutputMode.TextMode)
@@ -1047,8 +1013,6 @@ class SlicerAPI:
         directory = os.path.dirname(path)
         if directory:
             os.makedirs(directory, exist_ok=True)
-        # ThreeMFWorkspaceWriter.write is @call_on_qt_thread: it posts itself to the main
-        # thread and waits, so it must be called from this worker thread, never from main.
         writer = self._app.getWorkspaceFileHandler().getWriter("3MFWriter")
         if writer is None:
             raise ToolError("Плагин 3MFWriter недоступен")

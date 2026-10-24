@@ -7,7 +7,6 @@ here: they come from the slicer's own material profiles.
 """
 from collections import OrderedDict
 
-# Ratings: 0 = poor, 1 = limited, 2 = good, 3 = excellent
 MATERIALS = OrderedDict([
     ("proto_pla", {
         "name": "Proto PLA", "base": "PLA", "density": 1.25, "tg_c": 58, "hdt_c": 55,

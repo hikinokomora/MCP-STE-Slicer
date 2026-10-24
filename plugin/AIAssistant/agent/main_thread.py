@@ -23,7 +23,7 @@ def run_on_main(func, *args, timeout=60, **kwargs):
     def wrapper():
         try:
             box["result"] = func(*args, **kwargs)
-        except Exception as e:  # re-raised in the calling thread
+        except Exception as e:
             box["error"] = e
         finally:
             done.set()

@@ -65,7 +65,7 @@ class MCPServer:
         try:
             data = self._registry.call(name, arguments)
             is_error = False
-        except Exception as e:  # tool errors are returned to the model, not raised
+        except Exception as e:
             if e.__class__.__name__ != "ToolError":
                 Logger.log("e", "AIAssistant tool %s failed: %s", name, traceback.format_exc())
             data = {"error": str(e)}

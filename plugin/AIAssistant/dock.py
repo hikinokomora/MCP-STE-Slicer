@@ -16,7 +16,7 @@ import sys
 
 from UM.Logger import Logger
 
-WINDOW_TITLE = "slicer assistant"  # must match <title> in web/index.html
+WINDOW_TITLE = "slicer assistant"
 
 if sys.platform == "win32":
     import ctypes
@@ -52,15 +52,14 @@ SWP_NOSIZE = 0x0001
 SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
 
-# Panel placement relative to the slicer window (physical pixels at 100% scale; scaled by DPI below)
 PANEL_WIDTH = 520
 PANEL_MARGIN_RIGHT = 28
-PANEL_MARGIN_TOP = 72       # just below the slicer top bar
-PANEL_MARGIN_BOTTOM = 70    # above the slicer bottom bar
+PANEL_MARGIN_TOP = 72
+PANEL_MARGIN_BOTTOM = 70
 PANEL_MIN_HEIGHT = 380
-PANEL_HEIGHT_SHARE = 0.49     # default height: ~half of the free height (30% more compact than 0.70)
-PANEL_SHIFT_TO_CENTER = 0.25  # share of the slicer width the panel is moved from the right edge toward the center
-SLICER_LEFT_PANEL = 520       # do not cover the slicer settings panel on the left
+PANEL_HEIGHT_SHARE = 0.49
+PANEL_SHIFT_TO_CENTER = 0.25
+SLICER_LEFT_PANEL = 520
 
 
 def find_edge():
@@ -132,18 +131,17 @@ class DockedChatWindow:
         self._app = app
         self._profile_dir = profile_dir
         self._edge = find_edge()
-        self._chat = None          # HWND of the Edge window
-        self._slicer = None        # HWND of the slicer main window
+        self._chat = None
+        self._slicer = None
         self._last_slicer_rect = None
         self._placed = False
         self._timer = None
         self._wait_ticks = 0
-        self._pids = set()          # Edge processes we started
+        self._pids = set()
 
     def available(self):
         return self._edge is not None
 
-    # ------------------------------------------------------------------ public
     def open(self, url):
         """Show the docked chat. Returns False if the caller should fall back to a normal browser."""
         if not self.available():
@@ -173,7 +171,6 @@ class DockedChatWindow:
             self._chat = hwnd
         return bool(hwnd)
 
-    # ------------------------------------------------------------------ internals
     def _slicer_hwnd(self):
         window = self._app.getMainWindow()
         return int(window.winId()) if window is not None else None
@@ -193,7 +190,6 @@ class DockedChatWindow:
         height = max(int(PANEL_MIN_HEIGHT * s), int(free * PANEL_HEIGHT_SHARE))
         x = right - width - int(PANEL_MARGIN_RIGHT * s) - int((right - left) * PANEL_SHIFT_TO_CENTER)
         x = max(x, left + int(SLICER_LEFT_PANEL * s))
-        # centred vertically inside the free area between the slicer top and bottom bars
         y = top + int(PANEL_MARGIN_TOP * s) + max(0, (free - height) // 2)
         return x, y, width, height
 
@@ -204,11 +200,9 @@ class DockedChatWindow:
         rect = _rect(self._slicer) if self._slicer else None
         if rect:
             x, y, w, h = self._target_rect(rect)
-            s = self._scale() or 1.0  # Chromium takes DIPs here
+            s = self._scale() or 1.0
             args += ["--window-position=%d,%d" % (int(x / s), int(y / s)),
                      "--window-size=%d,%d" % (int(w / s), int(h / s))]
-        # Start Edge through ShellExecuteW, NOT subprocess: an unreferenced Popen on Python 3.5/Windows ends up in
-        # subprocess._active and the slicer later crashes with WinError 6 when it starts CuraEngine.
         params = subprocess.list2cmdline(args[1:])
         rc = ctypes.windll.shell32.ShellExecuteW(None, "open", self._edge, params, None, 1)
         if rc <= 32:
@@ -234,20 +228,19 @@ class DockedChatWindow:
                 if not self._slicer:
                     return
             if not self._chat or not _user32.IsWindow(self._chat):
-                if self._chat:  # the user closed the chat window
+                if self._chat:
                     self._chat = None
                     self._timer.stop()
                     return
                 self._chat = _find_chat_hwnd(self._pids)
                 if not self._chat:
                     self._wait_ticks += 1
-                    if self._wait_ticks == 16:  # ~4 s: log what Edge windows exist, to diagnose the lookup
+                    if self._wait_ticks == 16:
                         Logger.log("w", "AIAssistant: chat window not found yet; Chromium windows: %s",
                                    [(t, p) for _h, t, p in _edge_windows()])
-                    if self._wait_ticks > 120:  # ~30 s: Edge did not show up, stop looking
+                    if self._wait_ticks > 120:
                         self._timer.stop()
                     return
-                # owned window: stays above the slicer, minimizes with it
                 _SetWindowLongPtr(self._chat, GWLP_HWNDPARENT, self._slicer)
                 self._placed = False
                 Logger.log("i", "AIAssistant: chat window attached to the slicer window")
@@ -262,7 +255,6 @@ class DockedChatWindow:
                 _user32.SetWindowPos(self._chat, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE)
                 self._placed = True
             elif self._last_slicer_rect and slicer_rect != self._last_slicer_rect:
-                # keep the user's own position/size of the panel, just follow the slicer's right edge
                 old = self._last_slicer_rect
                 chat_rect = _rect(self._chat)
                 if chat_rect:

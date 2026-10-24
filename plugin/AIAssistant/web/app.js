@@ -43,9 +43,8 @@ let lastEventId = 0;
 let busy = false;
 let typingEl = null;
 const pendingTools = {};
-const attachments = []; // {id, name, el, ready}
+const attachments = [];
 
-// ------------------------------------------------------------------ helpers
 async function api(path, options = {}) {
   const res = await fetch(path, options);
   const text = await res.text();
@@ -69,7 +68,6 @@ function inline(s) {
     .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
 }
 
-// Small markdown renderer: headings, lists, tables, code blocks, paragraphs.
 function markdown(src) {
   const lines = String(src || "").replace(/\r/g, "").split("\n");
   let html = "";
@@ -158,7 +156,6 @@ function summarizeArgs(args) {
   return Object.entries(args).map(([k, v]) => k + "=" + (typeof v === "object" ? JSON.stringify(v) : v)).join(", ");
 }
 
-// ------------------------------------------------------------------ events
 function handleEvent(ev) {
   switch (ev.type) {
     case "reset":
@@ -304,7 +301,6 @@ async function refreshState() {
   }
 }
 
-// ------------------------------------------------------------------ attachments
 function renderChips() {
   els.chips.innerHTML = "";
   attachments.forEach((a, idx) => {
@@ -334,8 +330,6 @@ async function addFiles(fileList) {
   }
 }
 
-// ------------------------------------------------------------------ save offer
-// After slicing the agent does not write files on its own: the user decides here (or writes corrections first).
 function renderSaveOffer() {
   els.messages.querySelectorAll(".save-offer").forEach((n) => n.remove());
   const box = document.createElement("div");
@@ -357,8 +351,6 @@ function renderSaveOffer() {
   scrollDown();
 }
 
-// ------------------------------------------------------------------ correction offer
-// The agent only proposes; the user decides whether to remember the correction and for whom.
 function renderCorrectionOffer(ev) {
   const box = document.createElement("div");
   box.className = "save-offer corr-offer";
@@ -420,10 +412,9 @@ async function loadCorrections() {
     };
     fill("corr-local", data.local || [], true);
     fill("corr-global", data.global || [], false);
-  } catch (e) { /* the list is optional */ }
+  } catch (e) {}
 }
 
-// ------------------------------------------------------------------ send
 async function send(text, extra = {}) {
   if (busy) return;
   if (attachments.some((a) => !a.ready)) {
@@ -436,7 +427,7 @@ async function send(text, extra = {}) {
     await api("/api/message", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, attachments: ids, approve_save: !!extra.approve_save }) });
     els.messages.querySelectorAll(".save-offer").forEach((n) => n.remove());
-    if (extra.keepInput) return;  // a button click must not wipe what the user is typing
+    if (extra.keepInput) return;
     attachments.length = 0;
     renderChips();
     els.input.value = "";
@@ -452,7 +443,6 @@ function autosize() {
   updateSendState();
 }
 
-// ------------------------------------------------------------------ settings
 async function openSettings() {
   const s = await api("/api/settings");
   const f = els.settingsForm;
@@ -474,7 +464,6 @@ async function saveSettings() {
   return api("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 }
 
-// ------------------------------------------------------------------ wiring
 els.composer.addEventListener("submit", (e) => { e.preventDefault(); send(els.input.value); });
 els.input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(els.input.value); }
@@ -519,11 +508,10 @@ window.addEventListener("drop", (e) => {
   try {
     const s = await api("/api/settings");
     if (!s.has_key || location.hash === "#settings") openSettings();
-  } catch (e) { /* server not ready */ }
+  } catch (e) {}
   poll();
 })();
 
-// show / hide agent steps (tool calls); errors stay visible; the choice is remembered in this browser profile
 (function initStepsToggle() {
   const toggle = $("toggle-steps");
   if (!toggle) return;
@@ -532,6 +520,6 @@ window.addEventListener("drop", (e) => {
   apply();
   toggle.addEventListener("change", () => {
     apply();
-    try { localStorage.setItem("ai_show_steps", toggle.checked ? "1" : "0"); } catch (e) { /* storage unavailable */ }
+    try { localStorage.setItem("ai_show_steps", toggle.checked ? "1" : "0"); } catch (e) {}
   });
 })();

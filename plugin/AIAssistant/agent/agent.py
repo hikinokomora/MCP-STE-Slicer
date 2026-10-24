@@ -20,7 +20,6 @@ MAX_TOOL_RESULT_CHARS = 8000
 IMAGE_EXT = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
 MODEL_EXT = (".stl", ".obj", ".3mf")
 TEXT_EXT = (".txt", ".md", ".csv", ".json")
-# files are written only after the user agrees (button in the chat or an explicit request in the message)
 SAVE_TOOLS = ("save_project", "export_gcode")
 SAVE_REQUEST_RE = re.compile(r"сохран|экспорт|save|export", re.IGNORECASE)
 SAVE_REFUSAL_RE = re.compile(r"\bне\s+(надо\s+|нужно\s+)?(сохран|экспорт)", re.IGNORECASE)
@@ -47,13 +46,11 @@ class Agent:
         self._busy = False
         self._stop = False
         self._messages = []
-        self._save_approved = False   # the user allowed writing 3MF/G-code in the current request
-        self._unsaved_slice = False   # there is a slice result that has not been saved yet
+        self._save_approved = False
+        self._unsaved_slice = False
         self.reset()
 
-    # ------------------------------------------------------------------ state
     def reset(self):
-        # a new dialogue picks up edits of the knowledge base / system prompt without restarting the slicer
         try:
             importlib.reload(knowledge)
         except Exception:
@@ -67,7 +64,6 @@ class Agent:
     def stop(self):
         self._stop = True
 
-    # ------------------------------------------------------------------ input
     def submit(self, text, attachments, approve_save=False):
         with self._lock:
             if self._busy:
@@ -109,7 +105,6 @@ class Agent:
             return [{"type": "text", "text": text_block}] + images, True
         return text_block, False
 
-    # ------------------------------------------------------------------ loop
     def _run(self, text, attachments):
         try:
             content, has_images = self._build_user_content(text, attachments)
@@ -131,7 +126,6 @@ class Agent:
                                [(c.get("function") or {}).get("name") for c in (message.get("tool_calls") or [])], usage)
                 except LLMError as e:
                     if has_images and not e.retryable:
-                        # the model may not accept images: retry once with text only
                         self._strip_images()
                         has_images = False
                         self._bus.emit("warning", text="LLM не приняла изображение, повторяю запрос без него: %s" % e)
@@ -164,7 +158,7 @@ class Agent:
             self._bus.emit("error", text="Внутренняя ошибка агента: %s" % e)
         finally:
             if self._unsaved_slice and not self._stop:
-                self._bus.emit("save_offer")  # the chat shows "Save / Don't save" buttons
+                self._bus.emit("save_offer")
             self._busy = False
             self._bus.emit("status", state="idle")
 
@@ -190,7 +184,6 @@ class Agent:
         if arguments is None:
             text = json.dumps({"error": "Аргументы не являются корректным JSON: %s" % raw_args[:300]}, ensure_ascii=False)
         elif name in SAVE_TOOLS and not self._save_approved:
-            # enforced in code, not only in the prompt: no files without the user's consent
             text = json.dumps({"error": "Файлы сохраняются только после подтверждения пользователя. Не сохраняй: "
                                         "закончи итогом и спроси, сохранить ли проект (3MF) и G-code."},
                               ensure_ascii=False)

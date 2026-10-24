@@ -27,14 +27,13 @@ class ToolRegistry:
         self._output_dir = output_dir_provider
         self._corrections = corrections_store
         self._bus = bus
-        self._last_selection = {}  # requirements / part type of the last recommend_materials call
-        self._current_material = None  # material of the main extruder set through the agent
-        self._batch_count = None       # parts requested in the spec (from duplicate_model or slice)
-        self._agent_speed_keys = set()  # speed settings the agent lowered on its own (not asked by the user)
+        self._last_selection = {}
+        self._current_material = None
+        self._batch_count = None
+        self._agent_speed_keys = set()
         self._tools = OrderedDict()
         self._register_all()
 
-    # ------------------------------------------------------------------ registry
     def add(self, name, description, schema, handler, group):
         self._tools[name] = {"name": name, "description": description, "inputSchema": schema,
                              "handler": handler, "group": group}
@@ -58,7 +57,6 @@ class ToolRegistry:
             raise ToolError("Неизвестный инструмент %s" % name)
         return tool["handler"](**(arguments or {}))
 
-    # ------------------------------------------------------------------ helpers
     def _default_path(self, ext):
         info = self._api.scene_info()
         objects = info.get("objects") or []
@@ -68,11 +66,9 @@ class ToolRegistry:
         name = "project.3mf" if ext == "3mf" else "result.gcode"
         return os.path.join(folder, name)
 
-    # ------------------------------------------------------------------ tools
     def _register_all(self):
         api = self._api
 
-        # --- settings & profiles
         self.add("get_scene_info",
                  "Текущее состояние слайсера: принтер, режим 3D/5D, профиль, материал, объекты на столе, изменённые настройки.",
                  _obj(), lambda: api.scene_info(), "scene")
@@ -157,7 +153,6 @@ class ToolRegistry:
                       ["mode"]),
                  self._set_print_mode, "mode")
 
-        # --- models
         self.add("load_model", "Загрузить файл модели (STL/OBJ/3MF) на стол по абсолютному пути; модель назначается на экструдер (по умолчанию 0 — основной).",
                  _obj({"path": {"type": "string"}, "extruder": EXTRUDER}, ["path"]),
                  lambda path, extruder=0: api.load_model(path, extruder), "model")
@@ -198,7 +193,6 @@ class ToolRegistry:
         self.add("delete_objects", "Удалить модель по object_id или все модели (object_id = all).",
                  _obj({"object_id": {"type": "string"}}), lambda object_id=None: api.delete_objects(object_id), "model")
 
-        # --- slicing
         self.add("slice", "Запустить слайсинг и дождаться результата: время печати, расход материала. Для партии передай "
                  "batch_count — сколько деталей нужно всего; код сам посчитает число запусков и общее время партии.",
                  _obj({"batch_count": {"type": "integer", "description": "сколько одинаковых деталей нужно всего (из ТЗ)"}}),
@@ -212,10 +206,8 @@ class ToolRegistry:
                  "Проверить сохранённый G-code: не пустой, есть слои, температуры соответствуют материалу, режим печати, оценка расхода.",
                  _obj({"path": {"type": "string"}}), self._validate_gcode, "slice")
 
-    # ------------------------------------------------------------------ handlers
-    # Parts that keep their shape by function: a flexible material is never right for them unless the spec says so.
     RIGID_PART_TYPES = ("gear", "bushing", "shaft", "housing", "bracket", "impeller", "fastener", "decor", "tooling")
-    RIGID_MAX_ELONGATION = 3    # "tough, thin parts must not break off" = not brittle; glass-filled ABSPA G8 has 4 %, rubber 50 %+
+    RIGID_MAX_ELONGATION = 3
 
     def _guard_requirements(self, requirements, part_type, elongation_from_spec):
         """The LLM translates the spec into numbers and sometimes inflates them ("toughness" -> elongation >= 50 %,
@@ -248,7 +240,6 @@ class ToolRegistry:
             pass
         ranked = knowledge.score_materials(requirements, available)
         if requirements.get("flexible") is False:
-            # a flexible material for a rigid part is disqualifying, not "one failed requirement among others"
             ranked.sort(key=lambda r: "flexible" in r["failed"])
         applied = []
         if self._corrections is not None:
@@ -268,9 +259,6 @@ class ToolRegistry:
                                "материалов, которые выполняют ТЗ. Упомяни их одной строкой в итоге.")
         return result
 
-    # Dense meshes (scans, sculpted figurines: 500k+ triangles) slice for many minutes because the engine keeps every
-    # segment longer than meshfix_maximum_resolution (0.01 mm by default). 0.1 mm does not change the model and is far
-    # below what a 0.4 mm nozzle can reproduce.
     DENSE_MESH_TRIANGLES = 300000
     DENSE_MESH_RESOLUTION = 0.1
 
@@ -284,9 +272,7 @@ class ToolRegistry:
             return total
         return run_on_main(count)
 
-    MIN_ADAPTIVE_LAYER = 0.1   # adaptive layers must never go below this (0.1 ± 0.1 gave ~0.01 mm layers and weeks of printing)
-    # Rigid materials: speeds that do not affect the visible surface are never left below these (mm/s). A run with all of
-    # them at 25 printed 4 figurines in 13 days. The outer wall (speed_wall_0) is not touched: it gives the appearance.
+    MIN_ADAPTIVE_LAYER = 0.1
     MIN_SPEEDS = (("speed_print", 50), ("speed_infill", 50), ("speed_wall_x", 50), ("speed_support", 50),
                   ("speed_topbottom", 25))
 
@@ -318,8 +304,6 @@ class ToolRegistry:
 
     def _set_print_mode(self, mode, base_diameter=None, non_printing_base_diameter=None, round_segments=None,
                         confirmed_by_user=False):
-        # Elastic parts (seals, boots, bellows) are printed in 3D: a soft part does not hold its shape on the rotating
-        # cylindrical base, and bellows have a varying inner diameter that cannot sit on the base at all.
         if mode != "classic" and self._is_flexible_job() and not confirmed_by_user:
             raise ToolError("Режим НЕ изменён: деталь гибкая/эластичная (по ТЗ или по материалу) — такие детали печатаются в 3D "
                             "(classic): мягкая деталь не держит форму на вращающемся цилиндрическом основании, а у гофр и "
@@ -400,9 +384,6 @@ class ToolRegistry:
                     self._api.set_settings({"layer_height": 0.15, "adaptive_layer_height_variation": 0.05}, None)
                     notes.append("адаптивные слои ограничены диапазоном 0.1–0.2 мм (было %.2f ± %.2f: слои тоньше 0.1 мм "
                                  "не видны глазу, но многократно удлиняют печать и нарезку)" % (layer, variation))
-            # Only speeds the agent itself lowered: the material profile's own speeds (e.g. abrasive composites) and
-            # values the user asked for stay as they are. Not in 5D (it has its own *_cylindrical speeds) and not for
-            # flexible materials, which really must print slowly.
             if (self._agent_speed_keys and not self._is_flexible_job()
                     and self._setting("printing_mode") in (None, "classic")):
                 raised = {}
@@ -429,7 +410,7 @@ class ToolRegistry:
                     notes.append("древовидные поддержки заменены обычными (только от стола, с плотным верхним слоем): "
                                  "на такой плотной сетке древовидные считаются десятки минут")
         except Exception:
-            pass  # the guards are optional: slice anyway
+            pass
         result = self._api.slice()
         if isinstance(result, dict):
             try:
@@ -458,7 +439,6 @@ class ToolRegistry:
         if ctx.get("requirements") and int(extruder) == 0:
             problem = corrections.spec_problem(material_id, ctx["requirements"])
         if problem and not confirmed_by_user:
-            # enforced in code: a material that breaks the spec is never applied silently
             raise ToolError(problem + ". Материал НЕ изменён. Объясни пользователю, какие требования ТЗ не выполняются, "
                             "и спроси подтверждение; если подтвердит — вызови set_material с confirmed_by_user=true.")
         previous = self._current_material if int(extruder) == 0 else None

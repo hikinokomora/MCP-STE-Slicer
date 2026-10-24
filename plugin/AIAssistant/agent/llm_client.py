@@ -7,8 +7,6 @@ import urllib.request
 
 from UM.Logger import Logger
 
-# Public root CAs newer than the certifi bundle shipped with STE Slicer (2020),
-# e.g. GlobalSign Root R46 used by api.timeweb.ai.
 EXTRA_ROOTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "certs", "extra_roots.pem")
 
 
@@ -26,7 +24,7 @@ def _ssl_context():
     global _context
     if _context is not None:
         return _context
-    context = ssl.create_default_context()  # loads the Windows ROOT/CA stores
+    context = ssl.create_default_context()
     sources = [EXTRA_ROOTS]
     try:
         import certifi
@@ -42,9 +40,6 @@ def _ssl_context():
     return context
 
 
-# Qwen 3 "thinks" before every step: up to 6000 hidden reasoning tokens per step (~90 s at this provider).
-# A budget keeps the reasoning but caps it. Providers that do not know the parameter answer HTTP 400:
-# then it is dropped for the rest of the session.
 THINKING_BUDGET = 1024
 _thinking_param_supported = True
 
@@ -77,7 +72,7 @@ class LLMClient:
             return self._post(payload)
         except LLMError as e:
             if "thinking_budget" in payload and str(e).startswith("LLM вернула HTTP 400"):
-                _thinking_param_supported = False  # the provider does not accept it: work without the budget
+                _thinking_param_supported = False
                 payload.pop("thinking_budget")
                 return self._post(payload)
             raise
@@ -102,7 +97,7 @@ class LLMClient:
         except urllib.error.URLError as e:
             reason = str(e.reason)
             raise LLMError("Нет связи с LLM (%s): %s" % (self.base_url, reason), retryable="CERTIFICATE" not in reason)
-        except Exception as e:  # socket.timeout, connection reset, bad JSON
+        except Exception as e:
             raise LLMError("Ошибка запроса к LLM: %s" % e, retryable=True)
 
         choices = body.get("choices") or []

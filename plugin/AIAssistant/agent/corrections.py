@@ -23,7 +23,6 @@ import uuid
 
 from . import knowledge
 
-# Function of the part - finite on purpose: corrections must be comparable and countable.
 PART_TYPES = [
     ("seal", "уплотнение / пыльник / манжета"),
     ("gear", "зубчатая передача"),
@@ -42,7 +41,6 @@ PART_TYPES = [
 PART_TYPE_IDS = [p[0] for p in PART_TYPES]
 PART_TYPE_LABELS = dict(PART_TYPES)
 
-# Features derived from the spec requirements (the same dict that recommend_materials receives).
 FEATURES = [
     ("flexible", "гибкая / эластичная"),
     ("rigid", "жёсткая"),
@@ -60,7 +58,7 @@ FEATURES = [
 FEATURE_IDS = [f[0] for f in FEATURES]
 FEATURE_LABELS = dict(FEATURES)
 
-MIN_CONDITION_ITEMS = 2      # "for every part -> X" is too broad to be stored
+MIN_CONDITION_ITEMS = 2
 MAX_COMMENT = 300
 LOCAL_WEIGHT, GLOBAL_WEIGHT = 2, 1
 
@@ -171,7 +169,7 @@ def spec_problem(material_id, requirements):
     ranked = knowledge.score_materials(requirements)
     if not ranked:
         return None
-    if requirements.get("flexible") is False:  # a flexible material for a rigid part is disqualifying
+    if requirements.get("flexible") is False:
         ranked.sort(key=lambda r: "flexible" in r["failed"])
     best_failed = set(ranked[0]["failed"])
     mine = next((r for r in ranked if r["id"] == material_id), None)
@@ -183,7 +181,6 @@ def spec_problem(material_id, requirements):
     return None
 
 
-# ------------------------------------------------------------------ storage
 class Store:
     def __init__(self, folder, logger=None):
         self.local_path = os.path.join(folder, "corrections.json")
@@ -201,7 +198,7 @@ class Store:
     def _valid(self, items, source):
         good = []
         for c in items:
-            problems = validate(c, check_spec=False)  # the spec is re-checked when applied
+            problems = validate(c, check_spec=False)
             if problems:
                 self._log("AIAssistant: ignored %s correction %s: %s" % (source, c.get("id"), "; ".join(problems)))
             else:
@@ -220,7 +217,7 @@ class Store:
     def add_local(self, corr, proposed=False):
         with _lock:
             items = self._read(self.local_path)
-            items = [c for c in items if c.get("fingerprint") != corr["fingerprint"]]  # same rule -> replace
+            items = [c for c in items if c.get("fingerprint") != corr["fingerprint"]]
             corr = dict(corr, scope="proposed" if proposed else "local")
             corr.pop("source", None)
             items.append(corr)
@@ -248,7 +245,6 @@ class Store:
         os.replace(tmp, path)
 
 
-# ------------------------------------------------------------------ applying
 def apply(ranked, requirements, part_type, corrections):
     """Re-rank recommend_materials results with matching corrections. Returns (ranked, applied)."""
     current = set(features_from_requirements(requirements))
@@ -267,7 +263,6 @@ def apply(ranked, requirements, part_type, corrections):
             continue
         weight = (LOCAL_WEIGHT if c.get("source") == "local" else GLOBAL_WEIGHT) * 10 + len(cond.get("features") or [])
         if kind == "prefer":
-            # never lets a correction override the spec: the material must not fail more than the best one
             if any(k not in best_failed for k in row["failed"]):
                 continue
             row["correction_bonus"] = max(row.get("correction_bonus", 0), weight)

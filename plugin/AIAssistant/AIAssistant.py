@@ -38,7 +38,6 @@ DEFAULTS = {
     "model": "dashscope/qwen3.8-flash",
     "api_key": "",
     "output_dir": os.path.join(os.path.expanduser("~"), "Documents", "STE Slicer AI Results"),
-    # corrections accepted for everyone live in this public repository (corrections/global.json)
     "corrections_repo": "hikinokomora/MCP-STE-Slicer",
     "install_id": "",
 }
@@ -78,14 +77,11 @@ class AIAssistant(Extension):
         self._server = None
         self._server_lock = threading.Lock()
         self._upload_dir = os.path.join(Resources.getDataStoragePath(), "ai_assistant", "uploads")
-        # chat as an Edge app window attached to the slicer (falls back to the default browser)
         self._dock = DockedChatWindow(self._app, os.path.join(Resources.getDataStoragePath(), "ai_assistant", "edge_profile"))
 
-        # start the server once the UI is up so external MCP clients can connect right away
         self._app.engineCreatedSignal.connect(self._startServer)
         threading.Thread(target=self._fetchGlobalCorrections, daemon=True).start()
 
-    # ------------------------------------------------------------------ settings
     def getSetting(self, key):
         value = self._app.getPreferences().getValue(PREF + key)
         return value if value not in (None, "") else DEFAULTS.get(key, "")
@@ -96,7 +92,6 @@ class AIAssistant(Extension):
     def _llmSettings(self):
         return self.getSetting("base_url"), self.getSetting("api_key"), self.getSetting("model")
 
-    # ------------------------------------------------------------------ menu
     def _startServer(self):
         with self._server_lock:
             if self._server is not None:
@@ -120,7 +115,7 @@ class AIAssistant(Extension):
 
     def showSettings(self):
         if self._dock.available() and self._dock.is_open():
-            self._bus.emit("open_settings")  # the open page shows its settings dialog
+            self._bus.emit("open_settings")
             self._dock.open(self.url())
             return
         url = self.url("#settings")
@@ -132,7 +127,6 @@ class AIAssistant(Extension):
         os.makedirs(path, exist_ok=True)
         os.startfile(path) if hasattr(os, "startfile") else webbrowser.open("file://" + path)
 
-    # ------------------------------------------------------------------ corrections
     def install_id(self):
         """Random id of this installation: one vote per installation, no personal data."""
         value = self.getSetting("install_id")
@@ -150,7 +144,7 @@ class AIAssistant(Extension):
                 data = json.loads(response.read().decode("utf-8"))
             count = self._corrections.save_global_cache(data)
             Logger.log("i", "AIAssistant: loaded %d global corrections", count)
-        except Exception as e:  # offline: the cached copy keeps working
+        except Exception as e:
             Logger.log("w", "AIAssistant: global corrections not updated (%s), using the cached copy", e)
 
     def corrections_payload(self):
@@ -203,7 +197,6 @@ class AIAssistant(Extension):
         Logger.log("i", "AIAssistant: correction saved (%s): %s", saved["scope"], result["text"])
         return result
 
-    # ------------------------------------------------------------------ API used by the handler
     def store_upload(self, name, data):
         os.makedirs(self._upload_dir, exist_ok=True)
         safe = re.sub(r"[\\/:*?\"<>|]+", "_", os.path.basename(name)) or "file"
@@ -243,10 +236,9 @@ def _make_handler(ext):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
-        def log_message(self, fmt, *args):  # keep the slicer log clean
+        def log_message(self, fmt, *args):
             pass
 
-        # -------------------------------------------------------------- utils
         def _send(self, code, body, content_type="application/json; charset=utf-8"):
             if isinstance(body, (dict, list)):
                 body = json.dumps(body, ensure_ascii=False, default=str).encode("utf-8")
@@ -273,7 +265,6 @@ def _make_handler(ext):
             origin = self.headers.get("Origin")
             return origin is None or origin.startswith(("http://127.0.0.1", "http://localhost"))
 
-        # -------------------------------------------------------------- GET
         def do_GET(self):
             parsed = urlparse(self.path)
             path = parsed.path
@@ -294,7 +285,6 @@ def _make_handler(ext):
                 elif path == "/mcp":
                     self._send(405, {"error": "Use POST with JSON-RPC 2.0"})
                 elif path == "/api/debug/threads":
-                    # stacks of all Python threads; answers even when the Qt main thread hangs
                     names = {t.ident: t.name for t in threading.enumerate()}
                     dump = []
                     for ident, frame in sys._current_frames().items():
@@ -319,7 +309,6 @@ def _make_handler(ext):
             with open(full, "rb") as f:
                 self._send(200, f.read(), ctype)
 
-        # -------------------------------------------------------------- POST
         def do_POST(self):
             parsed = urlparse(self.path)
             path = parsed.path
@@ -369,7 +358,6 @@ def _make_handler(ext):
                 elif path == "/api/corrections/delete":
                     self._send(200, {"ok": ext._corrections.delete_local(str(self._json().get("id", "")))})
                 elif path == "/api/tool":
-                    # direct tool call from the UI (quick actions)
                     data = self._json()
                     self._send(200, ext._mcp.call_tool(data.get("name"), data.get("arguments") or {}, source="ui"))
                 else:

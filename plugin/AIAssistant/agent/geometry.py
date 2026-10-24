@@ -8,12 +8,11 @@ import math
 
 import numpy
 
-# printer = P . scene ; scene (x, y_up, z) -> printer (x, -z, y)
 P = numpy.array([[1.0, 0.0, 0.0],
                  [0.0, 0.0, -1.0],
                  [0.0, 1.0, 0.0]])
 
-OVERHANG_COS = math.cos(math.radians(45.0))  # faces steeper than 45 deg from vertical need support
+OVERHANG_COS = math.cos(math.radians(45.0))
 AXES = {"X": numpy.array([1.0, 0.0, 0.0]),
         "Y": numpy.array([0.0, 1.0, 0.0]),
         "Z": numpy.array([0.0, 0.0, 1.0])}
@@ -53,7 +52,6 @@ def rotation_between(a, b):
     if c > 1.0 - 1e-9:
         return numpy.identity(3)
     if c < -1.0 + 1e-9:
-        # 180 deg: rotate around any axis perpendicular to a
         perp = numpy.cross(a, [1.0, 0.0, 0.0])
         if numpy.linalg.norm(perp) < 1e-6:
             perp = numpy.cross(a, [0.0, 1.0, 0.0])
@@ -116,7 +114,6 @@ def revolution_analysis(tri, axis_vec, height_bins=24, sectors=36):
         return None
     hb = numpy.clip(((h - h.min()) / length * height_bins).astype(int), 0, height_bins - 1)
 
-    # centre of every cross-section on its own; keep the round ones
     centres = []
     for i in range(height_bins):
         m = hb == i
@@ -139,7 +136,6 @@ def revolution_analysis(tri, axis_vec, height_bins=24, sectors=36):
         return None
     diameter = float(2.0 * r.max())
 
-    # through bore: the innermost surface must surround the axis on most sectors
     rmin = float(r.min())
     near = r <= rmin + max(0.5, 0.05 * rmin)
     covered = len(numpy.unique(numpy.clip(((theta[near] + math.pi) / (2 * math.pi) * sectors).astype(int), 0, sectors - 1)))
@@ -224,8 +220,6 @@ def analyze(tri):
         result["is_body_of_revolution"] = rev["symmetry_score"] >= 0.85 and rev["round_fraction"] >= 0.6
         result["is_shaft_with_features"] = (not result["is_body_of_revolution"]) and rev["round_fraction"] >= 0.4
         result["has_axial_bore"] = rev["bore_diameter_mm"] >= 4.0
-        # 5D Spiral needs every cylindrical layer to be a closed ring: a tube/sleeve/ring whose material fills
-        # the whole annulus between the bore and the outer diameter, with a thin wall relative to the radius.
         r_out = rev["outer_diameter_mm"] / 2.0
         r_in = rev["bore_diameter_mm"] / 2.0
         annulus = math.pi * (r_out ** 2 - r_in ** 2) * rev["length_along_axis_mm"]
@@ -291,7 +285,7 @@ def plan_batches(count, part_w, part_d, bed_w, bed_d, margin=10.0, spacing=10.0,
     for rotated, (pw, pd) in ((False, (part_w, part_d)), (True, (part_d, part_w))):
         nx = int((usable_w + spacing) // (pw + spacing)) if pw <= usable_w else 0
         ny = int((usable_d + spacing) // (pd + spacing)) if pd <= usable_d else 0
-        key = (nx * ny, not rotated)  # prefer the original orientation on ties
+        key = (nx * ny, not rotated)
         if best is None or key > best[0]:
             best = (key, rotated, pw, pd, nx, ny)
     (capacity, _), rotated, pw, pd, nx, ny = best
@@ -302,7 +296,6 @@ def plan_batches(count, part_w, part_d, bed_w, bed_d, margin=10.0, spacing=10.0,
         capacity = max(1, min(capacity, int(max_per_run)))
     runs = int(math.ceil(count / float(capacity)))
     per_run = int(math.ceil(count / float(runs)))
-    # the most compact block of per_run parts that fits the grid
     layout = None
     for cols in range(1, nx + 1):
         rows = int(math.ceil(per_run / float(cols)))

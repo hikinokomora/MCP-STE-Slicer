@@ -19,7 +19,7 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "plugin", "AIAssistant"))
-from agent import corrections  # noqa: E402  (pure module, no slicer imports)
+from agent import corrections
 
 GLOBAL_PATH = os.path.join(HERE, "global.json")
 
