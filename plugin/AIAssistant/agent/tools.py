@@ -30,6 +30,7 @@ class ToolRegistry:
         self._last_selection = {}  # requirements / part type of the last recommend_materials call
         self._current_material = None  # material of the main extruder set through the agent
         self._batch_count = None       # parts requested in the spec (from duplicate_model or slice)
+        self._agent_speed_keys = set()  # speed settings the agent lowered on its own (not asked by the user)
         self._tools = OrderedDict()
         self._register_all()
 
@@ -136,12 +137,15 @@ class ToolRegistry:
                  lambda query: api.find_settings(query), "settings")
         self.add("set_settings",
                  "Изменить настройки: {ключ: значение}. Глобальные пишутся в глобальный стек, настройки экструдера — в экструдер (по умолчанию 0). "
-                 "Значения вне min/max отклоняются.",
-                 _obj({"values": {"type": "object"}, "extruder": EXTRUDER}, ["values"]),
-                 lambda values, extruder=None: api.set_settings(values, extruder), "settings")
+                 "Значения вне min/max отклоняются. user_requested=true — если пользователь сам попросил эти значения "
+                 "(например, «печатай медленнее»): тогда они не корректируются автоматически перед нарезкой.",
+                 _obj({"values": {"type": "object"}, "extruder": EXTRUDER,
+                       "user_requested": {"type": "boolean", "description": "значения прямо попросил пользователь"}},
+                      ["values"]),
+                 self._set_settings, "settings")
         self.add("reset_settings", "Сбросить все пользовательские изменения настроек. Только в самом начале работы над новой "
                  "деталью, до любых изменений; посреди работы не вызывать (сотрёт уже выставленное).",
-                 _obj(), lambda: api.reset_settings(), "settings")
+                 _obj(), self._reset_settings, "settings")
         self.add("set_print_mode",
                  "Переключить режим печати: classic (3D), cylindrical_full (5D), cylindrical (5D Spiral). Для 5D можно сразу задать диаметр цилиндрического основания.",
                  _obj({"mode": {"type": "string", "enum": ["classic", "cylindrical_full", "cylindrical"]},
@@ -247,11 +251,29 @@ class ToolRegistry:
         return run_on_main(count)
 
     MIN_ADAPTIVE_LAYER = 0.1   # adaptive layers must never go below this (0.1 ± 0.1 gave ~0.01 mm layers and weeks of printing)
+    # Rigid materials: speeds that do not affect the visible surface are never left below these (mm/s). A run with all of
+    # them at 25 printed 4 figurines in 13 days. The outer wall (speed_wall_0) is not touched: it gives the appearance.
+    MIN_SPEEDS = (("speed_print", 50), ("speed_infill", 50), ("speed_wall_x", 50), ("speed_support", 50),
+                  ("speed_topbottom", 25))
 
     def _setting(self, key):
         data = self._api.get_settings([key])
         entry = data.get(key) if isinstance(data, dict) else None
         return entry.get("value") if isinstance(entry, dict) else entry
+
+    def _set_settings(self, values, extruder=None, user_requested=False):
+        speed_keys = set(k for k, _ in self.MIN_SPEEDS)
+        for key in (values or {}):
+            if key in speed_keys:
+                if user_requested:
+                    self._agent_speed_keys.discard(key)
+                else:
+                    self._agent_speed_keys.add(key)
+        return self._api.set_settings(values, extruder)
+
+    def _reset_settings(self):
+        self._agent_speed_keys.clear()
+        return self._api.reset_settings()
 
     def _is_flexible_job(self):
         reqs = (self._last_selection or {}).get("requirements") or {}
@@ -316,6 +338,22 @@ class ToolRegistry:
                     self._api.set_settings({"layer_height": 0.15, "adaptive_layer_height_variation": 0.05}, None)
                     notes.append("адаптивные слои ограничены диапазоном 0.1–0.2 мм (было %.2f ± %.2f: слои тоньше 0.1 мм "
                                  "не видны глазу, но многократно удлиняют печать и нарезку)" % (layer, variation))
+            # Only speeds the agent itself lowered: the material profile's own speeds (e.g. abrasive composites) and
+            # values the user asked for stay as they are. Not in 5D (it has its own *_cylindrical speeds) and not for
+            # flexible materials, which really must print slowly.
+            if (self._agent_speed_keys and not self._is_flexible_job()
+                    and self._setting("printing_mode") in (None, "classic")):
+                raised = {}
+                for key, minimum in self.MIN_SPEEDS:
+                    if key not in self._agent_speed_keys:
+                        continue
+                    value = self._setting(key)
+                    if value is not None and float(value) < minimum:
+                        raised[key] = (float(value), float(minimum))
+                if raised:
+                    self._api.set_settings({k: v[1] for k, v in raised.items()}, None)
+                    notes.append("скорости, которые не влияют на внешний вид, подняты до нормальных (%s); внешняя стенка "
+                                 "оставлена медленной" % ", ".join("%s %g→%g" % (k, v[0], v[1]) for k, v in raised.items()))
             triangles = self._scene_triangles()
             if triangles > self.DENSE_MESH_TRIANGLES:
                 value = self._setting("meshfix_maximum_resolution")

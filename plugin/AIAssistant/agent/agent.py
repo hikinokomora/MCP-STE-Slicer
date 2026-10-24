@@ -198,7 +198,8 @@ class Agent:
             started = time.time()
             result = self._mcp.call_tool(name, arguments, source="agent")
             text = result["content"][0]["text"]
-            Logger.log("i", "AIAssistant: tool %s took %.1f s", name, time.time() - started)
+            Logger.log("i", "AIAssistant: tool %s took %.1f s, args: %s", name, time.time() - started,
+                       json.dumps(arguments, ensure_ascii=False)[:500])
             if not result.get("isError"):
                 if name == "slice":
                     self._unsaved_slice = True
