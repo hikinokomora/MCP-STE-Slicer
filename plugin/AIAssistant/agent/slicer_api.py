@@ -34,6 +34,16 @@ from steslicer.Settings.SetObjectExtruderOperation import SetObjectExtruderOpera
 from . import geometry
 from .main_thread import run_on_main
 
+# The hackathon reference projects are made for this printer (definition hte530v5.2.4).
+TARGET_PRINTER_NAME = "Stereotech Hybrid 530 V5.2.4"
+TARGET_PRINTER_DEFINITION = "hte530v5.2.4"
+
+# Global keys that define the print mode; switching a quality profile must not change them.
+MODE_KEYS = ("printing_mode", "cylindrical_mode_base_diameter", "non_printing_base_diameter", "cylindrical_round_segments")
+
+# Beyond warning_bound * factor (when the setting has no hard bound on that side) a value is rejected.
+WARNING_HARD_FACTOR = 1.5
+
 PRINT_MODES = {
     "classic": "3D",
     "cylindrical": "5D Spiral",
@@ -72,6 +82,8 @@ class SlicerAPI:
         self._slice_progress = 0.0
         self._slice_started_at = None
         self._slice_error = None
+        self._slice_cancel = threading.Event()
+        self._needs_slice = False  # set by compare_variants: the current G-code is from a test variant
         self._hooked_backends = set()
         self._uploads = {}  # lower-case file name -> full path, files the user attached in this session
 
@@ -202,6 +214,13 @@ class SlicerAPI:
             for key in stack.userChanges.getAllKeys():
                 user_changes[prefix + key] = stack.userChanges.getProperty(key, "value")
         info["changed_settings"] = user_changes
+        if info["printer_definition"] != TARGET_PRINTER_DEFINITION:
+            info["printer_warning"] = (
+                "Активен принтер «%s» (%s), а проекты готовятся для «%s» (%s): профили, материалы и "
+                "размер стола отличаются. Попросите пользователя выбрать «%s» в слайсере "
+                "(Настройки → Принтер → Добавить принтер), если он не подтвердил другой принтер явно."
+                % (info["printer"], info["printer_definition"], TARGET_PRINTER_NAME,
+                   TARGET_PRINTER_DEFINITION, TARGET_PRINTER_NAME))
         return info
 
     # ------------------------------------------------------------------ profiles
@@ -230,6 +249,7 @@ class SlicerAPI:
         gs = self._global()
         qm = self._app.getQualityManager()
         mm = self._app.getMachineManager()
+        mode_before = {key: gs.getProperty(key, "value") for key in MODE_KEYS}
         if custom_profile:
             groups = qm.getQualityChangesGroups(gs)
             if custom_profile not in groups:
@@ -240,25 +260,86 @@ class SlicerAPI:
             if quality_type not in groups:
                 raise ToolError("Профиль %s не найден. Есть: %s" % (quality_type, ", ".join(sorted(groups.keys()))))
             mm.setQualityGroup(groups[quality_type], no_dialog=True)
-        return {"quality_type": mm.activeQualityType, "profile_name": mm.activeQualityOrQualityChangesName}
+        result = {"quality_type": mm.activeQualityType, "profile_name": mm.activeQualityOrQualityChangesName}
+        mode_after = {key: gs.getProperty(key, "value") for key in MODE_KEYS}
+        if mode_after != mode_before:
+            if custom_profile:
+                # a custom profile may carry its own print mode: keep it, but say so
+                result["print_mode_changed"] = {"from": mode_before["printing_mode"], "to": mode_after["printing_mode"]}
+            else:
+                # The print mode lives in the user/custom-profile layer; dropping a custom profile would silently
+                # fall back to the machine default (5D). A quality profile must not change the mode.
+                for key, value in mode_before.items():
+                    if mode_after[key] != value:
+                        gs.userChanges.setProperty(key, "value", value)
+                result["print_mode_kept"] = mode_before["printing_mode"]
+        return result
 
-    def create_profile(self, name):
-        return run_on_main(self._create_profile, name)
+    def create_profile(self, name, timeout=10.0):
+        """Save the user changes as a new custom profile and activate it.
 
-    def _create_profile(self, name):
+        QualityManager.createQualityChanges moves the user changes into the new profile and clears them,
+        but does not activate it, and the quality lookup tables are rebuilt on a timer of the main thread.
+        So: create on the main thread, wait here (worker thread) until the profile shows up, activate it.
+        If it never shows up, put the user changes back so nothing is lost."""
+        if not name:
+            raise ToolError("Укажите имя нового профиля")
+        snapshot = run_on_main(self._snapshot_user_changes)
+        unique_name = run_on_main(self._create_quality_changes, name)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(0.3)
+            if run_on_main(self._activate_custom_profile, unique_name):
+                return {"created": unique_name, "active_profile": run_on_main(
+                    lambda: self._app.getMachineManager().activeQualityOrQualityChangesName),
+                        "note": "Текущие изменения настроек сохранены в пользовательский профиль и он активирован."}
+        run_on_main(self._restore_user_changes, snapshot)
+        raise ToolError("Профиль «%s» создан, но слайсер не дал его активировать; изменённые настройки "
+                        "оставлены в проекте как были." % unique_name)
+
+    def _create_quality_changes(self, name):
+        unique_name = self._app.getContainerRegistry().uniqueName(name)  # the same name createQualityChanges picks
+        self._app.getQualityManager().createQualityChanges(name)
+        return unique_name
+
+    def _activate_custom_profile(self, profile_name):
+        groups = self._app.getQualityManager().getQualityChangesGroups(self._global())
+        if profile_name not in groups:
+            return False
+        self._app.getMachineManager().setQualityChangesGroup(groups[profile_name], no_dialog=True)
+        return True
+
+    def save_profile(self, name=None):
+        """Like "Update profile with current settings/overrides": merge the user changes into the
+        active custom profile. With a built-in quality profile active there is nothing to update,
+        so a new custom profile is created when a name is given."""
+        has_custom, active = run_on_main(self._custom_profile_state)
+        if not has_custom:
+            if not name:
+                raise ToolError("Активен встроенный профиль качества «%s»: обновлять нечего. Укажите name, "
+                                "чтобы сохранить текущие настройки как новый пользовательский профиль." % active)
+            result = self.create_profile(name)
+            result["mode"] = "created"
+            return result
+        return run_on_main(self._update_custom_profile)
+
+    def _custom_profile_state(self):
+        quality_changes = self._global().qualityChanges
+        has_custom = quality_changes is not None and quality_changes.getId() != "empty_quality_changes"
+        return has_custom, self._app.getMachineManager().activeQualityOrQualityChangesName
+
+    def _update_custom_profile(self):
         gs = self._global()
-        qm = self._app.getQualityManager()
         mm = self._app.getMachineManager()
-        qm.createQualityChanges(name)
-        groups = qm.getQualityChangesGroups(gs)
-        created = None
-        for group_name in groups:
-            if group_name == name or group_name.startswith(name):
-                created = group_name
-        if created:
-            mm.setQualityChangesGroup(groups[created], no_dialog=True)
-        return {"created": created or name, "active_profile": mm.activeQualityOrQualityChangesName,
-                "note": "Текущие изменения настроек сохранены в пользовательский профиль и он активирован."}
+        quality_changes = gs.qualityChanges
+        changed = sum(len(list(stack.userChanges.getAllKeys())) for stack in [gs] + list(gs.extruders.values()))
+        from steslicer.Settings.ContainerManager import ContainerManager
+        manager = ContainerManager.getInstance()
+        if manager is None or not manager.updateQualityChanges():
+            raise ToolError("Не удалось обновить профиль «%s»" % quality_changes.getName())
+        manager.clearUserContainers()  # the values now live in the profile, as after the menu action
+        return {"mode": "updated", "profile": quality_changes.getName(), "merged_settings": changed,
+                "active_profile": mm.activeQualityOrQualityChangesName}
 
     # ------------------------------------------------------------------ materials
     def list_materials(self, extruder=0):
@@ -393,6 +474,16 @@ class SlicerAPI:
                     continue
                 low_w = stack.getProperty(key, "minimum_value_warning")
                 high_w = stack.getProperty(key, "maximum_value_warning")
+                # Many settings (layer_height, line widths, speeds) have only a warning bound on one side.
+                # Far beyond it the value is nonsense (e.g. a 50 mm layer), so treat it as a hard limit there.
+                if high is None and high_w is not None and high_w > 0 and value > high_w * WARNING_HARD_FACTOR:
+                    rejected[key] = ("значение %s намного больше рекомендуемого максимума %s (жёсткая граница %s)"
+                                     % (value, high_w, round(high_w * WARNING_HARD_FACTOR, 4)))
+                    continue
+                if low is None and low_w is not None and low_w > 0 and value < low_w / WARNING_HARD_FACTOR:
+                    rejected[key] = ("значение %s намного меньше рекомендуемого минимума %s (жёсткая граница %s)"
+                                     % (value, low_w, round(low_w / WARNING_HARD_FACTOR, 4)))
+                    continue
                 if (low_w is not None and value < low_w) or (high_w is not None and value > high_w):
                     warnings.append("%s = %s вне рекомендуемого диапазона [%s; %s]" % (key, value, low_w, high_w))
             stack.userChanges.setProperty(key, "value", value)
@@ -731,8 +822,16 @@ class SlicerAPI:
         if not self._nodes():
             raise ToolError("Нечего слайсить: на столе нет моделей.")
         backend = self._app.getBackend()
+        # CylindricalBackend borrows CuraEngineBackend's engine for 5D slices. While 5D is active
+        # CuraEngineBackend ignores that engine's exit, keeps the dead process and on the next 3D
+        # slice sends the job into a closed socket and waits forever. Drop it so slice() restarts it.
+        process = getattr(backend, "_process", None)
+        if backend.getPluginId() == "CuraEngineBackend" and process is not None and process.poll() is not None:
+            Logger.log("d", "AIAssistant: engine of %s exited (%s), restarting it", backend.getPluginId(), process.returncode)
+            backend._process = None
         Logger.log("d", "AIAssistant: forceSlice on %s, busy=%s", backend.getPluginId(), self._backend_busy())
         self._slice_done.clear()
+        self._slice_cancel.clear()
         self._slice_error = None
         self._slice_progress = 0.0
         self._slice_started_at = time.time()
@@ -747,22 +846,149 @@ class SlicerAPI:
             if still_busy:
                 Logger.log("w", "AIAssistant: backend still busy before slicing: %s", still_busy)
             backend_id = run_on_main(self._start_slice)
-            finished = self._slice_done.wait(timeout)
-            started = self._slice_started_at
-            self._slice_started_at = None
-            if not finished:
-                raise ToolError("Слайсинг не завершился за %s с. Для 5D проверьте лицензию ATSS." % timeout)
+            try:
+                self._wait_for_slice(timeout)
+            finally:
+                started = self._slice_started_at
+                self._slice_started_at = None
             if self._slice_error:
                 raise ToolError(self._slice_error)
             time.sleep(0.5)  # print information arrives right after the Done state
             result = self.slice_result()
+            self._needs_slice = False
             result["backend"] = backend_id
             result["slicing_seconds"] = round(time.time() - started, 1)
             self._bus.emit("slice_result", **result)
             return result
 
+    def _wait_for_slice(self, timeout, idle_abort=5.0):
+        """Wait for Done/Error. Gives up early when the user stops the agent, or when the slice was
+        cancelled in the slicer (state back to not_started and the backend idle for `idle_abort` s)."""
+        deadline = time.time() + timeout
+        idle_since = None
+        while not self._slice_done.wait(1.0):
+            if self._slice_cancel.is_set():
+                raise ToolError("Слайсинг остановлен пользователем.")
+            now = time.time()
+            if now > deadline:
+                raise ToolError("Слайсинг не завершился за %d с. Для 5D проверьте, что активирована лицензия ATSS." % timeout)
+            if self._slice_state in ("not_started", "disabled") and not run_on_main(self._backend_busy):
+                if idle_since is None:
+                    idle_since = now
+                elif now - idle_since >= idle_abort:
+                    if self._slice_state == "disabled":
+                        raise ToolError("Слайсинг недоступен: бэкенд отключён. Для 5D проверьте лицензию ATSS.")
+                    raise ToolError("Слайсинг прерван: его отменили в слайсере или изменилась сцена. Запустите slice ещё раз.")
+            else:
+                idle_since = None
+
+    def cancel_slice(self):
+        """Stop a slice started by the agent (called from the chat's Stop button)."""
+        if self._slice_started_at is None:
+            return False
+        self._slice_cancel.set()
+        try:
+            run_on_main(lambda: self._app.getBackend().stopSlicing(), timeout=10)
+        except Exception:
+            Logger.logException("w", "AIAssistant: stopSlicing failed")
+        return True
+
+    # ------------------------------------------------------------------ variants
+    VARIANT_PRESETS = [
+        ("прочно", {"wall_line_count": 5, "top_layers": 6, "bottom_layers": 6, "infill_sparse_density": 60}),
+        ("быстро", {"layer_height": 0.25, "wall_line_count": 2, "infill_sparse_density": 15}),
+        ("экономно", {"wall_line_count": 2, "top_layers": 3, "bottom_layers": 3, "infill_sparse_density": 10}),
+    ]
+
+    def _snapshot_user_changes(self):
+        gs = self._global()
+        snapshot = {}
+        for stack in [gs] + list(gs.extruders.values()):
+            snapshot[stack.getId()] = dict((key, stack.userChanges.getProperty(key, "value"))
+                                           for key in stack.userChanges.getAllKeys())
+        return snapshot
+
+    def _restore_user_changes(self, snapshot):
+        gs = self._global()
+        for stack in [gs] + list(gs.extruders.values()):
+            wanted = snapshot.get(stack.getId(), {})
+            for key in list(stack.userChanges.getAllKeys()):
+                if key not in wanted:
+                    stack.userChanges.removeInstance(key)
+            for key, value in wanted.items():
+                stack.userChanges.setProperty(key, "value", value)
+
+    def _variant_values(self, values):
+        """In 5D the layer height has its own key; drop keys this printer does not have."""
+        gs = self._global()
+        five_axis = gs.getProperty("printing_mode", "value") != "classic"
+        result, skipped = {}, []
+        for key, value in values.items():
+            if five_axis and key == "layer_height" and gs.definition.findDefinitions(key="cylindrical_layer_height"):
+                key = "cylindrical_layer_height"
+            if gs.definition.findDefinitions(key=key):
+                result[key] = value
+            else:
+                skipped.append(key)
+        return result, skipped
+
+    def compare_variants(self, variants=None, apply=None):
+        """Slice the scene with 2-3 setting variants on top of the current settings, compare print time
+        and material, then restore the settings (or keep the variant named in `apply`)."""
+        if not run_on_main(self._nodes):
+            raise ToolError("На столе нет моделей. Сначала загрузите модель (load_model).")
+        if not variants:
+            variants = [{"name": name, "settings": dict(values)} for name, values in self.VARIANT_PRESETS]
+        if not isinstance(variants, list) or not 2 <= len(variants) <= 3:
+            raise ToolError("Нужно 2–3 варианта: [{name, settings: {ключ: значение}}]")
+        snapshot = run_on_main(self._snapshot_user_changes)
+        rows, applied = [], None
+        try:
+            for variant in variants:
+                name = str(variant.get("name") or "вариант %d" % (len(rows) + 1))
+                values, skipped = run_on_main(self._variant_values, dict(variant.get("settings") or {}))
+                run_on_main(self._restore_user_changes, snapshot)
+                change = run_on_main(self._set_settings, values, None)
+                row = {"name": name, "settings": change.get("applied", {})}
+                if change.get("rejected"):
+                    row["rejected"] = change["rejected"]
+                if skipped:
+                    row["skipped"] = skipped
+                try:
+                    result = self.slice()
+                    row.update({"print_time": result["print_time"], "print_time_seconds": result["print_time_seconds"],
+                                "material_total_g": result["material_total_g"]})
+                except ToolError as e:
+                    row["error"] = str(e)
+                rows.append(row)
+        finally:
+            run_on_main(self._restore_user_changes, snapshot)
+            if apply:
+                chosen = [v for v in variants if str(v.get("name")) == str(apply)]
+                if chosen:
+                    values, _skipped = run_on_main(self._variant_values, dict(chosen[0].get("settings") or {}))
+                    run_on_main(self._set_settings, values, None)
+                    applied = str(apply)
+        ok = [r for r in rows if "error" not in r]
+        # the G-code on the plate belongs to the last variant, not to the restored/applied settings
+        self._needs_slice = True
+        summary = {"variants": rows, "applied": applied, "needs_slice": True,
+                   "note": ("Настройки возвращены к исходным. " if not applied else "Применён вариант «%s». " % applied)
+                           + "G-code сброшен: перед export_gcode/save_project снова вызови slice."}
+        if ok:
+            summary["fastest"] = min(ok, key=lambda r: r["print_time_seconds"])["name"]
+            summary["lightest"] = min(ok, key=lambda r: r["material_total_g"])["name"]
+        return summary
+
     def slice_status(self):
-        return {"state": self._slice_state, "progress": round(self._slice_progress, 3)}
+        status = {"state": self._slice_state, "progress": round(self._slice_progress, 3)}
+        if self._slice_started_at is not None:
+            status["running_s"] = round(time.time() - self._slice_started_at, 1)
+            try:
+                status["backend_busy"] = run_on_main(self._backend_busy, timeout=5)
+            except Exception:
+                pass
+        return status
 
     def slice_result(self):
         return run_on_main(self._slice_result)
@@ -771,10 +997,22 @@ class SlicerAPI:
         info = self._app.getPrintInformation()
         duration = info.currentPrintTime
         seconds = int(duration) if duration is not None and duration.valid else 0
-        lengths = [round(float(x), 3) for x in (info.materialLengths or [])]
-        weights = [round(float(x), 1) for x in (info.materialWeights or [])]
+        raw_lengths = list(info.materialLengths or [])
+        raw_weights = list(info.materialWeights or [])
+        # PrintInformation fills these lists while iterating global_stack.extruders, a plain dict whose
+        # order is arbitrary in Python 3.5. Replay the same iteration to map entries to extruder positions.
+        gs = self._global()
+        amounts = getattr(info, "_material_amounts", None)
+        positions = [p for p in gs.extruders if amounts is None or int(p) < len(amounts)]
+        if len(positions) != len(raw_weights):
+            positions = sorted(gs.extruders.keys(), key=int)[:len(raw_weights)]
+        by_position = dict(zip(positions, zip(raw_lengths, raw_weights)))
+        ordered = sorted(by_position.keys(), key=int)
+        lengths = [round(float(by_position[p][0]), 3) for p in ordered]
+        weights = [round(float(by_position[p][1]), 1) for p in ordered]
         scene = self._app.getController().getScene()
         has_gcode = bool(getattr(scene, "gcode_dict", {}).get(self._app.getMultiBuildPlateModel().activeBuildPlate))
+        names = {"0": "основной экструдер", "1": "второй экструдер"}
         return {
             "state": self._slice_state,
             "print_time_seconds": seconds,
@@ -782,11 +1020,17 @@ class SlicerAPI:
             "material_length_m": lengths,
             "material_weight_g": weights,
             "material_total_g": round(sum(weights), 1),
+            "by_extruder": [{"extruder": names.get(p, "экструдер %s" % p), "material": gs.extruders[p].material.getName(),
+                             "length_m": round(float(by_position[p][0]), 3), "weight_g": round(float(by_position[p][1]), 1)}
+                            for p in ordered if by_position[p][1] > 0],
             "gcode_ready": has_gcode,
         }
 
     # ------------------------------------------------------------------ export
     def export_gcode(self, path):
+        if self._needs_slice:
+            raise ToolError("После compare_variants G-code относится к тестовому варианту. Сначала вызови slice "
+                            "с итоговыми настройками, затем export_gcode.")
         directory = os.path.dirname(path)
         if directory:
             os.makedirs(directory, exist_ok=True)

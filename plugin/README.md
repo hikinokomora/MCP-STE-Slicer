@@ -45,7 +45,7 @@
 
 ## MCP-сервер
 
-Плагин сам является MCP-сервером (JSON-RPC 2.0 поверх HTTP): `POST http://127.0.0.1:8765/mcp`. Поддерживаются методы `initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`. Эти же 27 инструментов ассистент передаёт в LLM. Описание каждого — в [справочнике инструментов](../README.md#справочник-инструментов).
+Плагин сам является MCP-сервером (JSON-RPC 2.0 поверх HTTP): `POST http://127.0.0.1:8765/mcp`. Поддерживаются методы `initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`. Эти же 28 инструментов ассистент передаёт в LLM. Описание каждого — в [справочнике инструментов](../README.md#справочник-инструментов).
 
 ```bash
 curl -s -X POST http://127.0.0.1:8765/mcp -H "Content-Type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"
