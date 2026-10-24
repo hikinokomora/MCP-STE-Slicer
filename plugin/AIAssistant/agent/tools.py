@@ -26,6 +26,7 @@ class ToolRegistry:
         self._corrections = corrections_store
         self._bus = bus
         self._last_selection = {}  # requirements / part type of the last recommend_materials call
+        self._current_material = None  # material of the main extruder set through the agent
         self._tools = OrderedDict()
         self._register_all()
 
@@ -85,9 +86,14 @@ class ToolRegistry:
                  "Материалы, доступные для экструдера текущего принтера. in_knowledge_base=true — материал Stereotech "
                  "с проверенными свойствами (выбирай из них); generic_* — общие профили без данных о свойствах.",
                  _obj({"extruder": EXTRUDER}), self._list_materials, "material")
-        self.add("set_material", "Выбрать материал по id из list_materials (например enduse_petg).",
-                 _obj({"material_id": {"type": "string"}, "extruder": EXTRUDER}, ["material_id"]),
-                 lambda material_id, extruder=0: api.set_material(material_id, extruder), "material")
+        self.add("set_material",
+                 "Выбрать материал по id (например enduse_petg). Если материал не выполняет требования ТЗ из последнего "
+                 "recommend_materials, инструмент откажет: объясни пользователю, что не выполняется, и только после его "
+                 "явного подтверждения вызови снова с confirmed_by_user=true.",
+                 _obj({"material_id": {"type": "string"}, "extruder": EXTRUDER,
+                       "confirmed_by_user": {"type": "boolean", "description": "пользователь подтвердил материал, несмотря на несоответствие ТЗ"}},
+                      ["material_id"]),
+                 self._set_material, "material")
         self.add("set_extruder_enabled",
                  "Включить или выключить экструдер. Если второй экструдер (1) не нужен для детали — выключи его, "
                  "чтобы в проекте не оставался лишний материал. Основной экструдер (0) выключать нельзя.",
@@ -130,7 +136,8 @@ class ToolRegistry:
                  "Значения вне min/max отклоняются.",
                  _obj({"values": {"type": "object"}, "extruder": EXTRUDER}, ["values"]),
                  lambda values, extruder=None: api.set_settings(values, extruder), "settings")
-        self.add("reset_settings", "Сбросить все пользовательские изменения настроек.",
+        self.add("reset_settings", "Сбросить все пользовательские изменения настроек. Только в самом начале работы над новой "
+                 "деталью, до любых изменений; посреди работы не вызывать (сотрёт уже выставленное).",
                  _obj(), lambda: api.reset_settings(), "settings")
         self.add("set_print_mode",
                  "Переключить режим печати: classic (3D), cylindrical_full (5D), cylindrical (5D Spiral). Для 5D можно сразу задать диаметр цилиндрического основания.",
@@ -216,6 +223,28 @@ class ToolRegistry:
             result["applied_corrections"] = applied
             result["note"] += (" Учтены корректировки пользователей (applied_corrections): они меняют порядок только среди "
                                "материалов, которые выполняют ТЗ. Упомяни их одной строкой в итоге.")
+        return result
+
+    def _set_material(self, material_id, extruder=0, confirmed_by_user=False):
+        ctx = self._last_selection or {}
+        problem = None
+        if ctx.get("requirements") and int(extruder) == 0:
+            problem = corrections.spec_problem(material_id, ctx["requirements"])
+        if problem and not confirmed_by_user:
+            # enforced in code: a material that breaks the spec is never applied silently
+            raise ToolError(problem + ". Материал НЕ изменён. Объясни пользователю, какие требования ТЗ не выполняются, "
+                            "и спроси подтверждение; если подтвердит — вызови set_material с confirmed_by_user=true.")
+        previous = self._current_material if int(extruder) == 0 else None
+        result = self._api.set_material(material_id, extruder)
+        if int(extruder) == 0:
+            self._current_material = material_id
+        if problem:
+            result["warning"] = ("Материал выбран по решению пользователя и не выполняет ТЗ: %s. Обязательно укажи это в итоге. "
+                                 "Корректировку подбора с ним сохранить нельзя." % problem)
+        elif previous and previous != material_id and ctx.get("requirements"):
+            result["note"] = ("Материал заменён после подбора. Если это замена по просьбе пользователя — после нарезки вызови "
+                              "propose_correction(prefer_material=\"%s\", comment=<причина словами пользователя>), "
+                              "чтобы он решил, запомнить ли её." % material_id)
         return result
 
     def _propose_correction(self, prefer_material=None, avoid_material=None, part_type=None, features=None, comment=""):
