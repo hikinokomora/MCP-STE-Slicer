@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """Dialogue loop: user message -> LLM -> MCP tool calls -> LLM -> ... -> answer."""
 import base64
-import importlib
 import json
 import os
 import re
@@ -20,6 +19,10 @@ MAX_TOOL_RESULT_CHARS = 8000
 IMAGE_EXT = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
 MODEL_EXT = (".stl", ".obj", ".3mf")
 TEXT_EXT = (".txt", ".md", ".csv", ".json")
+# files are written only after the user agrees (button in the chat or an explicit request in the message)
+SAVE_TOOLS = ("save_project", "export_gcode")
+SAVE_REQUEST_RE = re.compile(r"сохран|экспорт|save|export", re.IGNORECASE)
+SAVE_REFUSAL_RE = re.compile(r"\bне\s+(надо\s+|нужно\s+)?(сохран|экспорт)", re.IGNORECASE)
 
 
 def extract_docx_text(path):
@@ -43,16 +46,14 @@ class Agent:
         self._busy = False
         self._stop = False
         self._messages = []
+        self._save_approved = False   # the user allowed writing 3MF/G-code in the current request
+        self._unsaved_slice = False   # there is a slice result that has not been saved yet
         self.reset()
 
     # ------------------------------------------------------------------ state
     def reset(self):
-        # a new dialogue picks up edits of the knowledge base / system prompt without restarting the slicer
-        try:
-            importlib.reload(knowledge)
-        except Exception:
-            Logger.logException("w", "AIAssistant: could not reload the knowledge base")
         self._messages = [{"role": "system", "content": knowledge.SYSTEM_PROMPT}]
+        self._unsaved_slice = False
 
     def is_busy(self):
         return self._busy
@@ -61,11 +62,14 @@ class Agent:
         self._stop = True
 
     # ------------------------------------------------------------------ input
-    def submit(self, text, attachments):
+    def submit(self, text, attachments, approve_save=False):
         with self._lock:
             if self._busy:
                 return False
             self._busy = True
+            text_l = text or ""
+            self._save_approved = bool(approve_save) or (
+                bool(SAVE_REQUEST_RE.search(text_l)) and not SAVE_REFUSAL_RE.search(text_l))
             self._stop = False
         threading.Thread(target=self._run, args=(text, attachments), daemon=True).start()
         return True
@@ -114,7 +118,11 @@ class Agent:
                     self._bus.emit("assistant_message", text="Остановлено пользователем.")
                     break
                 try:
+                    started = time.time()
                     message, usage = self._chat_with_retry(client, tools)
+                    Logger.log("i", "AIAssistant: LLM step %d took %.1f s, tool calls: %s, usage: %s", step + 1,
+                               time.time() - started,
+                               [(c.get("function") or {}).get("name") for c in (message.get("tool_calls") or [])], usage)
                 except LLMError as e:
                     if has_images and not e.retryable:
                         # the model may not accept images: retry once with text only
@@ -149,6 +157,8 @@ class Agent:
             Logger.log("e", "AIAssistant agent crashed: %s", traceback.format_exc())
             self._bus.emit("error", text="Внутренняя ошибка агента: %s" % e)
         finally:
+            if self._unsaved_slice and not self._stop:
+                self._bus.emit("save_offer")  # the chat shows "Save / Don't save" buttons
             self._busy = False
             self._bus.emit("status", state="idle")
 
@@ -173,9 +183,22 @@ class Agent:
             arguments = None
         if arguments is None:
             text = json.dumps({"error": "Аргументы не являются корректным JSON: %s" % raw_args[:300]}, ensure_ascii=False)
+        elif name in SAVE_TOOLS and not self._save_approved:
+            # enforced in code, not only in the prompt: no files without the user's consent
+            text = json.dumps({"error": "Файлы сохраняются только после подтверждения пользователя. Не сохраняй: "
+                                        "закончи итогом и спроси, сохранить ли проект (3MF) и G-code."},
+                              ensure_ascii=False)
         else:
+            started = time.time()
             result = self._mcp.call_tool(name, arguments, source="agent")
             text = result["content"][0]["text"]
+            Logger.log("i", "AIAssistant: tool %s took %.1f s", name, time.time() - started)
+            if not result.get("isError"):
+                if name == "slice":
+                    self._unsaved_slice = True
+                elif name == "save_project":
+                    self._unsaved_slice = False
+                    self._bus.emit("save_offer_clear")
         if len(text) > MAX_TOOL_RESULT_CHARS:
             text = text[:MAX_TOOL_RESULT_CHARS] + "...(обрезано)"
         self._messages.append({"role": "tool", "tool_call_id": call.get("id", name), "content": text})

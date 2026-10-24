@@ -275,3 +275,49 @@ def _hints(r):
 
 def axis_to_vertical_rotation(axis_name):
     return rotation_between(AXES[axis_name], AXES["Z"])
+
+
+def plan_batches(count, part_w, part_d, bed_w, bed_d, margin=10.0, spacing=10.0, max_per_run=None):
+    """How to print `count` identical 3D parts: how many fit on the bed and how to split them into equal runs.
+
+    The footprint (part_w x part_d, mm) is packed on a grid with `spacing` between parts and `margin` from the
+    bed edges. The part may be turned 90 degrees around the vertical axis if more copies fit (that does not change
+    print quality). Runs are balanced (12 parts, 8 fit -> 2 runs of 6, not 8 + 4) so every run takes the same time.
+    Positions are part centres relative to the bed centre (printer X right, Y back).
+    """
+    count = max(1, int(count))
+    usable_w, usable_d = bed_w - 2 * margin, bed_d - 2 * margin
+    best = None
+    for rotated, (pw, pd) in ((False, (part_w, part_d)), (True, (part_d, part_w))):
+        nx = int((usable_w + spacing) // (pw + spacing)) if pw <= usable_w else 0
+        ny = int((usable_d + spacing) // (pd + spacing)) if pd <= usable_d else 0
+        key = (nx * ny, not rotated)  # prefer the original orientation on ties
+        if best is None or key > best[0]:
+            best = (key, rotated, pw, pd, nx, ny)
+    (capacity, _), rotated, pw, pd, nx, ny = best
+    if capacity == 0:
+        return {"requested": count, "max_per_plate": 0}
+    plate_capacity = capacity
+    if max_per_run:
+        capacity = max(1, min(capacity, int(max_per_run)))
+    runs = int(math.ceil(count / float(capacity)))
+    per_run = int(math.ceil(count / float(runs)))
+    # the most compact block of per_run parts that fits the grid
+    layout = None
+    for cols in range(1, nx + 1):
+        rows = int(math.ceil(per_run / float(cols)))
+        if rows > ny:
+            continue
+        block_w, block_d = cols * pw + (cols - 1) * spacing, rows * pd + (rows - 1) * spacing
+        score = max(block_w / usable_w, block_d / usable_d)
+        if layout is None or score < layout[0]:
+            layout = (score, cols, rows, block_w, block_d)
+    _, cols, rows, block_w, block_d = layout
+    positions = []
+    for i in range(per_run):
+        r, c = divmod(i, cols)
+        positions.append((round(-block_w / 2 + pw / 2 + c * (pw + spacing), 2),
+                          round(block_d / 2 - pd / 2 - r * (pd + spacing), 2)))
+    return {"requested": count, "max_per_plate": plate_capacity, "runs": runs, "per_run": per_run,
+            "last_run": count - per_run * (runs - 1), "rotated_90": rotated, "grid": [cols, rows],
+            "spacing_mm": spacing, "margin_mm": margin, "positions_mm": positions}

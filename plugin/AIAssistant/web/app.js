@@ -35,6 +35,7 @@ const TOOL_LABELS = {
   slice: ["", "Слайсинг"], slice_status: ["", "Статус слайсинга"],
   export_gcode: ["", "Экспорт G-code"], save_project: ["", "Сохранение 3MF"],
   validate_gcode: ["", "Проверка G-code"], set_extruder_enabled: ["", "Экструдер вкл/выкл"],
+  duplicate_model: ["", "Размещение партии"],
 };
 const MODE_LABELS = { classic: "3D", cylindrical: "5D Spiral", cylindrical_full: "5D" };
 
@@ -161,7 +162,7 @@ function summarizeArgs(args) {
 function handleEvent(ev) {
   switch (ev.type) {
     case "reset":
-      els.messages.querySelectorAll(".msg, .tool").forEach((n) => n.remove());
+      els.messages.querySelectorAll(".msg, .tool, .save-offer").forEach((n) => n.remove());
       els.welcome.classList.remove("hidden");
       break;
     case "user_message": {
@@ -201,6 +202,8 @@ function handleEvent(ev) {
       break;
     case "slice_result": renderSliceResult(ev); break;
     case "open_settings": if (firstBatchDone) openSettings(); break;
+    case "save_offer": renderSaveOffer(); break;
+    case "save_offer_clear": els.messages.querySelectorAll(".save-offer").forEach((n) => n.remove()); break;
   }
 }
 
@@ -330,17 +333,43 @@ async function addFiles(fileList) {
   }
 }
 
+// ------------------------------------------------------------------ save offer
+// After slicing the agent does not write files on its own: the user decides here (or writes corrections first).
+function renderSaveOffer() {
+  els.messages.querySelectorAll(".save-offer").forEach((n) => n.remove());
+  const box = document.createElement("div");
+  box.className = "save-offer";
+  box.innerHTML =
+    '<div class="save-q">Сохранить проект (3MF) и G-code?</div>' +
+    '<div class="save-actions">' +
+    '<button type="button" class="primary save-yes">Сохранить</button>' +
+    '<button type="button" class="ghost save-no">Не сохранять</button></div>' +
+    '<div class="save-hint">Или напишите правки — ассистент внесёт их и перенарежет.</div>';
+  box.querySelector(".save-yes").addEventListener("click", () => {
+    box.remove();
+    send("Сохранить проект (3MF) и G-code.", { approve_save: true, keepInput: true });
+  });
+  box.querySelector(".save-no").addEventListener("click", () => {
+    box.innerHTML = '<div class="save-hint">Файлы не сохранены. Чтобы сохранить позже, напишите «сохрани».</div>';
+  });
+  els.messages.appendChild(box);
+  scrollDown();
+}
+
 // ------------------------------------------------------------------ send
-async function send(text) {
+async function send(text, extra = {}) {
   if (busy) return;
   if (attachments.some((a) => !a.ready)) {
     addMessage("warning", "Дождитесь окончания загрузки файлов");
     return;
   }
   if (!text.trim() && !attachments.length) return;
-  const ids = attachments.map((a) => a.id);
+  const ids = extra.keepInput ? [] : attachments.map((a) => a.id);
   try {
-    await api("/api/message", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, attachments: ids }) });
+    await api("/api/message", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, attachments: ids, approve_save: !!extra.approve_save }) });
+    els.messages.querySelectorAll(".save-offer").forEach((n) => n.remove());
+    if (extra.keepInput) return;  // a button click must not wipe what the user is typing
     attachments.length = 0;
     renderChips();
     els.input.value = "";
